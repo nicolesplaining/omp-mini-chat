@@ -1,14 +1,12 @@
-# Codex Mini Chat
+# OMP Mini Chat
 
-A small, always-on-top macOS chat footer for Codex. It shows your recent tasks, supports multiple popups, and continues the same synced task without creating branches.
+An always-on-top macOS footer for [Oh My Pi](https://github.com/can1357/oh-my-pi). It supports simultaneous resizable chat popups, live terminal synchronization, working indicators, and unread-response dots.
 
 ## Use
 
-Requires macOS 13 or newer and Codex signed in.
+```sh
+./Scripts/build-app.sh
+open "./outputs/OMP Mini Chat.app"
+```
 
-1. Run `swift build -c release`.
-2. Launch `.build/release/MiniChat`.
-3. Allow Accessibility access when prompted.
-4. Keep Codex open, select a task tab, and type. Mini Chat sends through Codex so the original task, project, permissions, and Git access stay in sync.
-
-Select message text and press **Command-C**, or use a message’s copy button. Standard **Command-V**, **Command-X**, and **Command-A** shortcuts work in the composer. Press **Control–Option–Space** to show or hide the popups.
+Requires macOS 13+. Click **+** to choose a project, or open any session active within the last two days. Drag popups to move them, resize from the lower-right corner, and press **Control–Option–Space** to hide or restore them.

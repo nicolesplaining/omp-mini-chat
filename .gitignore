@@ -1,0 +1,9 @@
+.build/
+.DS_Store
+outputs/
+Vendor/omp
+Vendor/omp.download
+Vendor/omp.version
+Vendor/SHA256SUMS.txt
+Vendor/LICENSE
+Vendor/THIRD-PARTY-NOTICES.txt

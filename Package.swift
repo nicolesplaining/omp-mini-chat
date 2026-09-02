@@ -3,15 +3,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "MiniChat",
+    name: "OmpMiniChat",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "MiniChat", targets: ["MiniChat"])
+        .executable(name: "OmpMiniChat", targets: ["OmpMiniChat"])
     ],
     targets: [
         .executableTarget(
-            name: "MiniChat",
-            path: "Sources/MiniChat",
+            name: "OmpMiniChat",
+            path: "Sources/OmpMiniChat",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon")
