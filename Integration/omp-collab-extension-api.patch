@@ -1,0 +1,188 @@
+diff --git a/packages/coding-agent/src/collab/extension-context.ts b/packages/coding-agent/src/collab/extension-context.ts
+new file mode 100644
+index 000000000..c31d7a0d6
+--- /dev/null
++++ b/packages/coding-agent/src/collab/extension-context.ts
+@@ -0,0 +1,40 @@
++import type {
++	ExtensionCollabContext,
++	ExtensionCollabHostInfo,
++	ExtensionCollabStartOptions,
++} from "../extensibility/extensions/types";
++import type { InteractiveModeContext } from "../modes/types";
++import { CollabHost } from "./host";
++
++function hostInfo(host: CollabHost): ExtensionCollabHostInfo {
++	return {
++		link: host.link,
++		webLink: host.webLink,
++		viewLink: host.viewLink,
++		webViewLink: host.webViewLink,
++	};
++}
++
++/** Build the trusted-extension facade without exposing CollabHost internals. */
++export function createExtensionCollabContext(ctx: InteractiveModeContext): ExtensionCollabContext {
++	return {
++		isHosting: () => ctx.collabHost !== undefined,
++		info: () => (ctx.collabHost ? hostInfo(ctx.collabHost) : undefined),
++		start: async (options?: ExtensionCollabStartOptions) => {
++			if (ctx.collabGuest) throw new Error("Cannot host while joined to another collaboration session");
++			if (ctx.collabHost) return hostInfo(ctx.collabHost);
++
++			const relayInput = options?.relayUrl?.trim() || ctx.settings.get("collab.relayUrl") || "";
++			if (!relayInput) throw new Error("No collaboration relay is configured");
++			const relayUrl = relayInput.includes("://") ? relayInput : `wss://${relayInput}`;
++			const webUrl = options?.webUrl ?? ctx.settings.get("collab.webUrl") ?? "";
++			const host = new CollabHost(ctx);
++			await host.start(relayUrl, webUrl);
++			ctx.collabHost = host;
++			return hostInfo(host);
++		},
++		stop: async (reason = "host stopped by extension") => {
++			await ctx.collabHost?.stop(reason);
++		},
++	};
++}
+diff --git a/packages/coding-agent/src/extensibility/extensions/runner.ts b/packages/coding-agent/src/extensibility/extensions/runner.ts
+index 8c7858a96..41c975db9 100644
+--- a/packages/coding-agent/src/extensibility/extensions/runner.ts
++++ b/packages/coding-agent/src/extensibility/extensions/runner.ts
+@@ -446,6 +446,7 @@ export class ExtensionRunner {
+ 	#getContextUsageFn: () => ContextUsage | undefined = () => undefined;
+ 	#compactFn: (instructionsOrOptions?: string | CompactOptions) => Promise<void> = async () => {};
+ 	#getSystemPromptFn: () => string[] = () => [];
++	#collabContext: ExtensionContextActions["collab"];
+ 	#getAsyncJobSnapshotFn: () => AsyncJobSnapshot | null = () => null;
+ 	#newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
+ 	#branchHandler: BranchHandler = async () => ({ cancelled: false });
+@@ -685,6 +686,7 @@ export class ExtensionRunner {
+ 		this.#getContextUsageFn = contextActions.getContextUsage;
+ 		this.#compactFn = contextActions.compact;
+ 		this.#getSystemPromptFn = contextActions.getSystemPrompt;
++		this.#collabContext = contextActions.collab;
+ 
+ 		// Command context actions (optional, only for interactive mode)
+ 		if (commandContextActions) {
+@@ -1170,6 +1172,7 @@ export class ExtensionRunner {
+ 		return {
+ 			ui: this.#uiContext,
+ 			mode: this.#mode,
++			collab: this.#collabContext,
+ 			getContextUsage: () => this.#getContextUsageFn(),
+ 			compact: instructionsOrOptions => this.#compactFn(instructionsOrOptions),
+ 			getAsyncJobSnapshot: () => this.#getAsyncJobSnapshotFn(),
+diff --git a/packages/coding-agent/src/extensibility/extensions/types.ts b/packages/coding-agent/src/extensibility/extensions/types.ts
+index d7a0e396c..bfcd824f4 100644
+--- a/packages/coding-agent/src/extensibility/extensions/types.ts
++++ b/packages/coding-agent/src/extensibility/extensions/types.ts
+@@ -452,11 +452,40 @@ export interface ExtensionModelQuery {
+ /** Runtime host mode exposed to Pi-compatible extensions. */
+ export type ExtensionMode = "tui" | "rpc" | "json" | "print";
+ 
++/** Share links for a collaboration session hosted by the current OMP task. */
++export interface ExtensionCollabHostInfo {
++	/** Full-control link. Treat this value as a secret. */
++	link: string;
++	/** Browser form of the full-control link. */
++	webLink: string;
++	/** Read-only link. */
++	viewLink: string;
++	/** Browser form of the read-only link. */
++	webViewLink: string;
++}
++
++export interface ExtensionCollabStartOptions {
++	/** Relay override. Defaults to the configured `collab.relayUrl`. */
++	relayUrl?: string;
++	/** Browser client override. Defaults to the configured `collab.webUrl`. */
++	webUrl?: string;
++}
++
++/** TUI-only collaboration hosting capability exposed to trusted extensions. */
++export interface ExtensionCollabContext {
++	isHosting(): boolean;
++	info(): ExtensionCollabHostInfo | undefined;
++	start(options?: ExtensionCollabStartOptions): Promise<ExtensionCollabHostInfo>;
++	stop(reason?: string): Promise<void>;
++}
++
+ export interface ExtensionContext {
+ 	/** UI methods for user interaction */
+ 	ui: ExtensionUIContext;
+ 	/** Current run mode. Use `"tui"` to guard terminal-only UI such as custom components. */
+ 	mode: ExtensionMode;
++	/** Host an encrypted collaboration session. Present only in interactive TUI mode. */
++	collab?: ExtensionCollabContext;
+ 	/** Get current context usage for the active model. */
+ 	getContextUsage(): ContextUsage | undefined;
+ 	/** Get a read-only snapshot of async jobs owned by this session. */
+@@ -1712,6 +1741,7 @@ export interface ExtensionContextActions {
+ 	getContextUsage: () => ContextUsage | undefined;
+ 	compact: (instructionsOrOptions?: string | CompactOptions) => Promise<void>;
+ 	getSystemPrompt: () => string[];
++	collab?: ExtensionCollabContext;
+ }
+ 
+ /** Actions for ExtensionCommandContext (ctx.* in command handlers). */
+diff --git a/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts b/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts
+index 3111a0047..435aef2c2 100644
+--- a/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts
++++ b/packages/coding-agent/src/modes/controllers/extension-ui-controller.ts
+@@ -1,6 +1,7 @@
+ import type { Component, OverlayHandle, TUI } from "@oh-my-pi/pi-tui";
+ import { Container, Spacer, Text } from "@oh-my-pi/pi-tui";
+ import type { CollabUiRequestDraft, CollabUiSelectItem } from "@oh-my-pi/pi-wire";
++import { createExtensionCollabContext } from "../../collab/extension-context";
+ import { KeybindingsManager } from "../../config/keybindings";
+ import type {
+ 	CompactOptions,
+@@ -214,6 +215,7 @@ export class ExtensionUiController {
+ 			getContextUsage: () => this.ctx.session.getContextUsage(),
+ 			compact: instructionsOrOptions => this.#compactSession(instructionsOrOptions),
+ 			getSystemPrompt: () => this.ctx.session.systemPrompt,
++			collab: createExtensionCollabContext(this.ctx),
+ 		};
+ 		const commandActions: ExtensionCommandContextActions = {
+ 			getContextUsage: () => this.ctx.session.getContextUsage(),
+@@ -447,6 +449,7 @@ export class ExtensionUiController {
+ 			getContextUsage: () => this.ctx.session.getContextUsage(),
+ 			compact: instructionsOrOptions => this.#compactSession(instructionsOrOptions),
+ 			getSystemPrompt: () => this.ctx.session.systemPrompt,
++			collab: createExtensionCollabContext(this.ctx),
+ 		};
+ 		const commandActions: ExtensionCommandContextActions = {
+ 			getContextUsage: () => this.ctx.session.getContextUsage(),
+diff --git a/packages/coding-agent/src/collab/host.ts b/packages/coding-agent/src/collab/host.ts
+index 5703c56c2..e682afdad 100644
+--- a/packages/coding-agent/src/collab/host.ts
++++ b/packages/coding-agent/src/collab/host.ts
+@@ -483,11 +483,7 @@ export class CollabHost {
+ 		const content: string | (TextContent | ImageContent)[] =
+ 			images && images.length > 0 ? [{ type: "text", text }, ...images] : text;
+ 		const details: CollabPromptDetails = { from: name };
+-		if (this.#ctx.session.isStreaming) {
+-			this.#ctx.updatePendingMessagesDisplay();
+-			this.#ctx.ui.requestRender();
+-			this.#scheduleStateBroadcast();
+-		}
++		const wasStreaming = this.#ctx.session.isStreaming;
+ 		this.#ctx.session
+ 			.promptCustomMessage(
+ 				{
+@@ -499,6 +495,15 @@ export class CollabHost {
+ 				},
+ 				{ streamingBehavior: "steer", queueChipText: text },
+ 			)
++			.then(() => {
++				// promptCustomMessage queues steering input asynchronously. Refresh only
++				// after it has entered the queue so the terminal displays it immediately.
++				if (wasStreaming) {
++					this.#ctx.updatePendingMessagesDisplay();
++					this.#ctx.ui.requestRender();
++					this.#scheduleStateBroadcast();
++				}
++			})
+ 			.catch(err => {
+ 				logger.warn("collab guest prompt failed", { error: String(err) });
+ 				this.#socket?.send({ t: "error", message: `prompt failed: ${String(err)}` }, fromPeer);

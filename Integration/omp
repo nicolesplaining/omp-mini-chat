@@ -1,0 +1,37 @@
+#!/bin/zsh
+# OMP Mini Chat launcher — keep this marker for safe install/uninstall detection.
+set -euo pipefail
+
+OMP_MINI_SUPPORT=${OMP_MINI_SUPPORT_DIR:-${HOME}/.local/share/omp-mini-chat}
+OMP_MINI_SYNC_BIN=${OMP_MINI_SUPPORT}/omp-sync
+OMP_MINI_STOCK_BIN=${HOME}/.local/bin/omp-stock
+OMP_MINI_EXTENSION=${OMP_MINI_SUPPORT}/omp-mini-auto-sync.js
+
+if [[ ${1:-} == "--stock" ]]; then
+  shift
+  exec "${OMP_MINI_STOCK_BIN}" "$@"
+fi
+
+if [[ ${1:-} == "update" ]]; then
+  if [[ ! -x "${OMP_MINI_STOCK_BIN}" ]]; then
+    print -u2 "Official OMP fallback is missing. Re-run the Mini Chat integration installer."
+    exit 1
+  fi
+  env PATH="${OMP_MINI_SUPPORT}/stock-path:${PATH}" "${OMP_MINI_STOCK_BIN}" "$@"
+  OMP_MINI_UPDATE_STATUS=$?
+  if (( OMP_MINI_UPDATE_STATUS == 0 )); then
+    if [[ " ${*} " == *" --check "* ]]; then
+      print "Official OMP update check complete."
+    else
+      print "Official OMP updated. Mini Chat will keep using its validated sync build until a compatible update is installed."
+    fi
+  fi
+  exit ${OMP_MINI_UPDATE_STATUS}
+fi
+
+if [[ ! -x "${OMP_MINI_SYNC_BIN}" ]]; then
+  print -u2 "OMP Mini Chat’s sync runtime is missing. Falling back to official OMP."
+  exec "${OMP_MINI_STOCK_BIN}" "$@"
+fi
+
+exec "${OMP_MINI_SYNC_BIN}" --extension "${OMP_MINI_EXTENSION}" "$@"

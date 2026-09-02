@@ -1,18 +1,32 @@
 import Foundation
 
 struct ChatMessage: Identifiable, Equatable {
-    enum Role { case user, assistant, notice }
+    enum Role { case user, assistant, notice, tool, thinking, status }
 
     let id: UUID
     let role: Role
+    var title: String?
     var text: String
     var isStreaming: Bool
+    var isError: Bool
+    let detailID: String?
 
-    init(id: UUID = UUID(), role: Role, text: String, isStreaming: Bool = false) {
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        title: String? = nil,
+        text: String,
+        isStreaming: Bool = false,
+        isError: Bool = false,
+        detailID: String? = nil
+    ) {
         self.id = id
         self.role = role
+        self.title = title
         self.text = text
         self.isStreaming = isStreaming
+        self.isError = isError
+        self.detailID = detailID
     }
 }
 
@@ -30,10 +44,54 @@ struct OmpSessionSummary: Identifiable, Equatable {
     }
 }
 
+struct LiveSessionSummary: Identifiable, Equatable {
+    let id: String
+    var title: String
+    var projectName: String
+
+    var preview: String { "Live through OMP’s end-to-end encrypted relay" }
+}
+
+struct OmpLiveSessionRecord: Codable, Equatable {
+    let version: Int
+    let sessionId: String
+    let sessionFile: String?
+    let title: String?
+    let cwd: String
+    let link: String
+    let viewLink: String?
+    let pid: Int32
+    let updatedAt: String
+
+    var summary: OmpSessionSummary {
+        let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayTitle = resolvedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Live OMP session"
+        return OmpSessionSummary(
+            id: sessionId,
+            path: sessionFile ?? "",
+            title: displayTitle,
+            preview: "Live through OMP’s end-to-end encrypted relay",
+            cwd: cwd,
+            modifiedAt: Self.dateFormatter.date(from: updatedAt) ?? Date()
+        )
+    }
+
+    var liveSummary: LiveSessionSummary {
+        LiveSessionSummary(id: sessionId, title: summary.title, projectName: summary.projectName)
+    }
+
+    private static let dateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
 enum ChatStartupTarget {
     case listOnly
     case session(OmpSessionSummary)
     case newSession(cwd: String)
+    case collab(OmpCollabLink, session: OmpSessionSummary?)
 }
 
 enum OmpMiniError: LocalizedError {

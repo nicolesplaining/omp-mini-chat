@@ -6,7 +6,7 @@ PROJECT_DIR=${SCRIPT_DIR:h}
 OUTPUT_DIR=${PROJECT_DIR}/outputs
 APP_PATH=${OUTPUT_DIR}/OMP\ Mini\ Chat.app
 VENDOR_DIR=${PROJECT_DIR}/Vendor
-OMP_VERSION=18.1.3
+OMP_VERSION=18.1.4
 
 case "$(uname -m)" in
   arm64) OMP_ASSET=omp-darwin-arm64 ;;
@@ -51,6 +51,13 @@ cp "${PROJECT_DIR}/.build/release/OmpMiniChat" "${APP_PATH}/Contents/MacOS/OmpMi
 cp "${PROJECT_DIR}/Resources/Info.plist" "${APP_PATH}/Contents/Info.plist"
 cp "${PROJECT_DIR}/Resources/mini-sync-leaf.js" "${APP_PATH}/Contents/Resources/mini-sync-leaf.js"
 cp "${VENDOR_DIR}/omp" "${APP_PATH}/Contents/Resources/omp"
+if [[ -x "${VENDOR_DIR}/omp-sync" ]]; then
+  cp "${VENDOR_DIR}/omp-sync" "${APP_PATH}/Contents/Resources/omp-sync"
+  cp "${PROJECT_DIR}/Integration/omp-mini-auto-sync.js" "${APP_PATH}/Contents/Resources/omp-mini-auto-sync.js"
+  cp "${PROJECT_DIR}/Integration/omp" "${APP_PATH}/Contents/Resources/omp-launcher"
+  chmod 755 "${APP_PATH}/Contents/Resources/omp-sync" "${APP_PATH}/Contents/Resources/omp-launcher"
+  chmod 600 "${APP_PATH}/Contents/Resources/omp-mini-auto-sync.js"
+fi
 cp "${VENDOR_DIR}/LICENSE" "${APP_PATH}/Contents/Resources/OMP-LICENSE"
 cp "${VENDOR_DIR}/THIRD-PARTY-NOTICES.txt" "${APP_PATH}/Contents/Resources/OMP-THIRD-PARTY-NOTICES"
 chmod 755 "${APP_PATH}/Contents/MacOS/OmpMiniChat" "${APP_PATH}/Contents/Resources/omp"

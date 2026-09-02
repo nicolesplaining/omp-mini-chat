@@ -41,18 +41,22 @@ private final class PopupSession {
     let panel: MiniPanel
     let store: ChatStore
     var sessionID: String?
+    let autoSynced: Bool
+    let collabRoomID: String?
 
-    init(panel: MiniPanel, store: ChatStore, sessionID: String?) {
+    init(panel: MiniPanel, store: ChatStore, sessionID: String?, autoSynced: Bool, collabRoomID: String?) {
         self.panel = panel
         self.store = store
         self.sessionID = sessionID
+        self.autoSynced = autoSynced
+        self.collabRoomID = collabRoomID
     }
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private let footerHeight: CGFloat = 46
-    private let defaultPopupSize = NSSize(width: 420, height: 590)
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGestureRecognizerDelegate {
+    private let footerHeight: CGFloat = 44
+    private let defaultPopupSize = NSSize(width: 370, height: 480)
     private var footerPanel: FooterPanel?
     private var footerControlPanel: FooterControlPanel?
     private var footerStore: ChatStore!
@@ -63,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var hotKey: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
     private var isFooterVisible = true
+    private var footerControlDragOffset = NSPoint.zero
+    private var suppressFooterControlClick = false
+    private var discoveredLiveSessions: [String: OmpLiveSessionRecord] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -72,16 +79,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         footerStore = ChatStore(target: .listOnly)
         footerStore.isFooterVisible = isFooterVisible
         footerStore.onOpenSession = { [weak self] session in self?.open(session) }
+        footerStore.onOpenLiveSession = { [weak self] session in self?.openLive(session) }
         footerStore.onNewSession = { [weak self] in self?.chooseProjectAndCreate() }
+        footerStore.onJoinCollab = { [weak self] in self?.promptAndJoinCollab() }
         createFooter()
         createFooterControl()
         createStatusItem()
         registerHotKey()
         applyFooterVisibility()
+        refreshAutomaticSync()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.footerStore.refreshSessions()
+                self?.refreshAutomaticSync()
                 self?.positionFooterControl()
                 self?.footerControlPanel?.orderFrontRegardless()
             }
@@ -154,12 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.contentView = NSHostingView(rootView: FloatingFooterControlView(store: footerStore) { [weak self] in
-            self?.toggleFooter()
+            self?.handleFooterControlClick()
         })
+        let drag = NSPanGestureRecognizer(target: self, action: #selector(dragFooterControl(_:)))
+        drag.delegate = self
+        drag.delaysPrimaryMouseButtonEvents = false
+        panel.contentView?.addGestureRecognizer(drag)
         footerControlPanel = panel
         positionFooterControl()
         panel.orderFrontRegardless()
@@ -195,6 +210,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         new.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
         new.target = self
         menu.addItem(new)
+
+        let join = NSMenuItem(
+            title: "Connect with Collaboration Link…",
+            action: #selector(joinFromMenu),
+            keyEquivalent: ""
+        )
+        join.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
+        join.target = self
+        menu.addItem(join)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit OMP Mini Chat", action: #selector(quitFromMenu), keyEquivalent: "q")
@@ -257,13 +281,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         footerStore.markRead(session.id)
         footerStore.selectedSessionID = session.id
+        if let record = discoveredLiveSessions[session.id],
+           let link = try? OmpCollabLink.parse(record.link) {
+            createPopup(target: .collab(link, session: record.summary))
+            return
+        }
         createPopup(target: .session(session))
     }
 
-    private func createPopup(target: ChatStartupTarget) {
+    private func openLive(_ session: LiveSessionSummary) {
+        if let popup = popups.first(where: { $0.sessionID == session.id }) {
+            footerStore.markRead(session.id)
+            show(popup)
+            return
+        }
+        guard let record = discoveredLiveSessions[session.id],
+              let link = try? OmpCollabLink.parse(record.link) else { return }
+        footerStore.markRead(session.id)
+        createPopup(target: .collab(link, session: record.summary))
+    }
+
+    private func promptAndJoinCollab() {
+        let alert = NSAlert()
+        alert.messageText = "Join a live OMP session"
+        alert.informativeText = "Run /collab in the OMP terminal, then paste the full-control link here. The room key stays in this app and session traffic is end-to-end encrypted."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 430, height: 26))
+        field.placeholderString = "roomId.key or https://my.omp.sh/#…"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Join")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let link = try OmpCollabLink.parse(field.stringValue)
+            if let existing = popups.first(where: { $0.sessionID == link.sessionID }) {
+                show(existing)
+                return
+            }
+            createPopup(target: .collab(link, session: nil))
+        } catch {
+            let errorAlert = NSAlert()
+            errorAlert.alertStyle = .warning
+            errorAlert.messageText = "Couldn’t join live session"
+            errorAlert.informativeText = error.localizedDescription
+            errorAlert.runModal()
+        }
+    }
+
+    @discardableResult
+    private func createPopup(target: ChatStartupTarget, showImmediately: Bool = true) -> PopupSession {
         let initialSessionID: String?
-        if case .session(let session) = target { initialSessionID = session.id }
-        else { initialSessionID = nil }
+        let autoSynced: Bool
+        let collabRoomID: String?
+        switch target {
+        case .session(let session):
+            initialSessionID = session.id
+            autoSynced = false
+            collabRoomID = nil
+        case .collab(let link, let session):
+            initialSessionID = session?.id ?? link.sessionID
+            autoSynced = session != nil
+            collabRoomID = link.roomID
+        default:
+            initialSessionID = nil
+            autoSynced = false
+            collabRoomID = nil
+        }
 
         let store = ChatStore(target: target)
         store.isFooterVisible = isFooterVisible
@@ -288,13 +371,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: MiniChatView(store: store))
 
-        let popup = PopupSession(panel: panel, store: store, sessionID: initialSessionID)
+        let popup = PopupSession(
+            panel: panel,
+            store: store,
+            sessionID: initialSessionID,
+            autoSynced: autoSynced,
+            collabRoomID: collabRoomID
+        )
         popups.append(popup)
-        if !restoreFrame(for: popup) { positionNewPopup(popup) }
+        restoreSize(for: popup)
+        if let initialSessionID, store.isCollabSession {
+            footerStore.upsertLiveSession(id: initialSessionID, title: store.currentTitle, projectName: store.currentProject)
+        }
 
         store.onHide = { [weak self, weak popup] in
             guard let self, let popup else { return }
             popup.panel.orderOut(nil)
+            self.refreshOpenSessionIDs()
             self.footerStore.refreshSessions()
         }
         store.onTogglePin = { [weak popup] in
@@ -304,12 +397,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.onToggleFooter = { [weak self] in self?.toggleFooter() }
         store.onOpenSession = { [weak self] session in self?.open(session) }
         store.onNewSession = { [weak self] in self?.chooseProjectAndCreate() }
+        store.onJoinCollab = { [weak self] in self?.promptAndJoinCollab() }
+        store.onLiveMetadataChanged = { [weak self] id, title, project in
+            self?.footerStore.upsertLiveSession(id: id, title: title, projectName: project)
+        }
         store.onSelectedSessionChanged = { [weak self, weak popup] id in
             guard let self, let popup, let id else { return }
             popup.sessionID = id
-            self.footerStore.markRead(id)
             self.footerStore.setWorking(popup.store.isBusy, for: id)
-            if popup.panel.isVisible { self.footerStore.selectedSessionID = id }
+            if popup.panel.isVisible {
+                self.footerStore.selectedSessionID = id
+                self.footerStore.markRead(id)
+            }
+            self.refreshOpenSessionIDs()
             self.saveFrame(for: popup.panel)
         }
         store.onWorkingStateChanged = { [weak self, weak popup] id, working in
@@ -320,13 +420,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let id { self.footerStore.markUnread(id) }
             self.footerStore.refreshSessions()
         }
-        show(popup)
+        if showImmediately { show(popup) }
+        else { store.connect() }
+        return popup
+    }
+
+    private func refreshAutomaticSync() {
+        DispatchQueue.global(qos: .utility).async {
+            let records = SessionCatalog.shared.listLiveSessions()
+            DispatchQueue.main.async { [weak self] in self?.applyAutomaticSync(records) }
+        }
+    }
+
+    private func applyAutomaticSync(_ records: [OmpLiveSessionRecord]) {
+        discoveredLiveSessions = Dictionary(uniqueKeysWithValues: records.map { ($0.sessionId, $0) })
+
+        for popup in Array(popups) where !popup.store.isBusy {
+            guard let sessionID = popup.sessionID else { continue }
+            if let record = discoveredLiveSessions[sessionID],
+               let link = try? OmpCollabLink.parse(record.link),
+               (!popup.store.isCollabSession || (popup.autoSynced && popup.collabRoomID != link.roomID)) {
+                    replace(popup, with: .collab(link, session: record.summary))
+            } else if popup.autoSynced, discoveredLiveSessions[sessionID] == nil {
+                if popup.panel.isVisible,
+                   let summary = footerStore.recentSessions.first(where: { $0.id == sessionID }),
+                   !summary.path.isEmpty {
+                    replace(popup, with: .session(summary))
+                } else {
+                    remove(popup)
+                }
+            }
+        }
+
+        for record in records where !popups.contains(where: { $0.sessionID == record.sessionId }) {
+            guard let link = try? OmpCollabLink.parse(record.link) else { continue }
+            createPopup(target: .collab(link, session: record.summary), showImmediately: false)
+        }
+
+        var summaries = records.map(\.liveSummary)
+        let discoveredIDs = Set(summaries.map(\.id))
+        summaries.append(contentsOf: popups.compactMap { popup in
+            guard popup.store.isCollabSession,
+                  !popup.autoSynced,
+                  let id = popup.sessionID,
+                  !discoveredIDs.contains(id) else { return nil }
+            return LiveSessionSummary(id: id, title: popup.store.currentTitle, projectName: popup.store.currentProject)
+        })
+        footerStore.replaceLiveSessions(summaries)
+    }
+
+    private func replace(_ popup: PopupSession, with target: ChatStartupTarget) {
+        let wasVisible = popup.panel.isVisible
+        let frame = popup.panel.frame
+        popup.store.shutdown()
+        popup.panel.orderOut(nil)
+        popups.removeAll { $0 === popup }
+        refreshOpenSessionIDs()
+
+        let replacement = createPopup(target: target, showImmediately: false)
+        replacement.panel.setFrame(frame, display: false)
+        if wasVisible { show(replacement) }
+    }
+
+    private func remove(_ popup: PopupSession) {
+        popup.store.shutdown()
+        popup.panel.orderOut(nil)
+        popups.removeAll { $0 === popup }
+        refreshOpenSessionIDs()
     }
 
     private func show(_ popup: PopupSession) {
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
-        constrainToScreen(popup.panel)
+        if popup.panel.isVisible {
+            constrainToScreen(popup.panel)
+        } else {
+            positionNewPopup(popup)
+        }
         popup.panel.orderFrontRegardless()
         popup.panel.makeKey()
         if isFooterVisible { footerPanel?.orderFrontRegardless() }
@@ -334,10 +504,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             footerStore.selectedSessionID = id
             footerStore.markRead(id)
         }
+        refreshOpenSessionIDs()
     }
 
     private func hideAllPopups() {
         popups.forEach { $0.panel.orderOut(nil) }
+        refreshOpenSessionIDs()
     }
 
     private func showAllPopups() {
@@ -348,11 +520,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
         for popup in popups {
-            constrainToScreen(popup.panel)
+            if popup.panel.isVisible {
+                constrainToScreen(popup.panel)
+            } else {
+                positionNewPopup(popup)
+            }
             popup.panel.orderFrontRegardless()
         }
         popups.last?.panel.makeKey()
         if isFooterVisible { footerPanel?.orderFrontRegardless() }
+        refreshOpenSessionIDs()
+    }
+
+    private func refreshOpenSessionIDs() {
+        footerStore.openSessionIDs = Set(popups.compactMap { popup in
+            guard popup.panel.isVisible else { return nil }
+            return popup.store.selectedSessionID ?? popup.sessionID
+        })
     }
 
     private func togglePopups() {
@@ -372,38 +556,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func positionFooterControl() {
         guard let panel = footerControlPanel else { return }
+        if let saved = UserDefaults.standard.string(forKey: "ompMini.footerControlOrigin") {
+            let origin = NSPointFromString(saved)
+            let savedFrame = NSRect(origin: origin, size: panel.frame.size)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.contains(savedFrame) }) {
+                panel.setFrameOrigin(origin)
+                return
+            }
+        }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
             ?? NSScreen.main
             ?? NSScreen.screens.first
-        guard let frame = screen?.frame else { return }
+        guard let frame = screen?.visibleFrame else { return }
         panel.setFrameOrigin(NSPoint(
             x: frame.maxX - panel.frame.width - 12,
             y: frame.maxY - panel.frame.height - 12
         ))
     }
 
+    @objc private func dragFooterControl(_ gesture: NSPanGestureRecognizer) {
+        guard let panel = footerControlPanel else { return }
+        let mouse = NSEvent.mouseLocation
+        switch gesture.state {
+        case .began:
+            suppressFooterControlClick = false
+            footerControlDragOffset = NSPoint(
+                x: mouse.x - panel.frame.minX,
+                y: mouse.y - panel.frame.minY
+            )
+        case .changed, .ended:
+            suppressFooterControlClick = true
+            let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+                ?? panel.screen
+                ?? NSScreen.main
+                ?? NSScreen.screens.first
+            guard let bounds = screen?.visibleFrame.insetBy(dx: 8, dy: 8) else { return }
+            let origin = NSPoint(
+                x: min(max(mouse.x - footerControlDragOffset.x, bounds.minX), bounds.maxX - panel.frame.width),
+                y: min(max(mouse.y - footerControlDragOffset.y, bounds.minY), bounds.maxY - panel.frame.height)
+            )
+            panel.setFrameOrigin(origin)
+            UserDefaults.standard.set(NSStringFromPoint(origin), forKey: "ompMini.footerControlOrigin")
+            if gesture.state == .ended {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.suppressFooterControlClick = false
+                }
+            }
+        default: break
+        }
+    }
+
+    private func handleFooterControlClick() {
+        guard !suppressFooterControlClick else { return }
+        toggleFooter()
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: NSGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: NSGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
     private func positionNewPopup(_ popup: PopupSession) {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = primaryScreen() else { return }
         let visible = screen.visibleFrame
-        let index = max(0, popups.count - 1)
-        let stagger = CGFloat(index % 7) * 24
-        let width = popup.panel.frame.width
-        let height = popup.panel.frame.height
-        let x = max(visible.minX + 10, visible.maxX - width - 18 - stagger)
+        let margin: CGFloat = 0
+        let gap: CGFloat = 0
         let footerTop = screen.frame.minY + (isFooterVisible ? footerHeight : 0)
-        let y = max(visible.minY + 10, footerTop + 10 + stagger)
-        popup.panel.setFrameOrigin(NSPoint(x: x, y: min(y, visible.maxY - height - 10)))
+        let left = visible.minX + margin
+        let right = visible.maxX - margin
+        let bottom = isFooterVisible ? footerTop - 1 : visible.minY + margin
+        let top = visible.maxY - margin
+
+        var size = popup.panel.frame.size
+        size.width = min(max(size.width, popup.panel.minSize.width), right - left)
+        size.height = min(max(size.height, popup.panel.minSize.height), top - bottom)
+
+        let occupied = popups.compactMap { other -> NSRect? in
+            guard other !== popup,
+                  other.panel.isVisible,
+                  other.panel.frame.intersects(screen.frame) else { return nil }
+            return other.panel.frame.insetBy(dx: -gap / 2, dy: -gap / 2)
+        }
+
+        // Fill each row from right to left. Existing windows are never moved, so
+        // users can still drag and resize them after their initial placement.
+        var y = bottom
+        while y + size.height <= top + 0.5 {
+            var x = right - size.width
+            while x >= left - 0.5 {
+                let candidate = NSRect(origin: NSPoint(x: x, y: y), size: size)
+                let collisions = occupied.filter { $0.intersects(candidate) }
+                if collisions.isEmpty {
+                    popup.panel.setFrame(candidate, display: false)
+                    return
+                }
+                guard let nextRight = collisions.map(\.minX).min() else { break }
+                x = nextRight - gap / 2 - size.width
+            }
+            y += size.height + gap
+        }
+
+        // Extremely crowded screens still get a usable, on-screen popup.
+        popup.panel.setFrame(
+            NSRect(x: right - size.width, y: bottom, width: size.width, height: size.height),
+            display: false
+        )
     }
 
     private func constrainToScreen(_ panel: MiniPanel) {
-        let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first
-        guard let visible = screen?.visibleFrame else { return }
+        guard let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let visible = screen.visibleFrame
+        let lowerEdge = isFooterVisible && screen === primaryScreen()
+            ? screen.frame.minY + footerHeight - 1
+            : visible.minY
         var frame = panel.frame
         frame.size.width = min(max(frame.width, panel.minSize.width), min(panel.maxSize.width, visible.width))
-        frame.size.height = min(max(frame.height, panel.minSize.height), min(panel.maxSize.height, visible.height))
+        frame.size.height = min(
+            max(frame.height, panel.minSize.height),
+            min(panel.maxSize.height, visible.maxY - lowerEdge)
+        )
         frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
-        frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+        frame.origin.y = min(max(frame.minY, lowerEdge), visible.maxY - frame.height)
         panel.setFrame(frame, display: true)
     }
 
@@ -413,15 +689,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return "ompMini.popupFrame.\(safe)"
     }
 
-    private func restoreFrame(for popup: PopupSession) -> Bool {
-        guard let value = UserDefaults.standard.string(forKey: frameKey(for: popup)) else { return false }
+    private func restoreSize(for popup: PopupSession) {
+        guard let value = UserDefaults.standard.string(forKey: frameKey(for: popup)) else { return }
         let frame = NSRectFromString(value)
         guard frame.width >= popup.panel.minSize.width,
-              frame.height >= popup.panel.minSize.height,
-              NSScreen.screens.contains(where: { $0.frame.intersects(frame) }) else { return false }
-        popup.panel.setFrame(frame, display: false)
-        constrainToScreen(popup.panel)
-        return true
+              frame.height >= popup.panel.minSize.height else { return }
+        popup.panel.setContentSize(frame.size)
     }
 
     private func saveFrame(for panel: MiniPanel) {
@@ -463,6 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleFromMenu() { togglePopups() }
     @objc private func newFromMenu() { chooseProjectAndCreate() }
+    @objc private func joinFromMenu() { promptAndJoinCollab() }
     @objc private func toggleFooterFromMenu() { toggleFooter() }
     @objc private func quitFromMenu() { NSApp.terminate(nil) }
 }

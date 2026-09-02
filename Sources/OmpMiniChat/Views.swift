@@ -1,6 +1,59 @@
 import AppKit
 import SwiftUI
 
+private enum MiniTheme {
+    static let chromeBlue = adaptive(
+        light: NSColor(calibratedRed: 0.70, green: 0.80, blue: 0.91, alpha: 0.88),
+        dark: NSColor(calibratedRed: 0.10, green: 0.20, blue: 0.34, alpha: 0.88)
+    )
+    static let border = adaptive(
+        light: NSColor(calibratedRed: 0.25, green: 0.39, blue: 0.54, alpha: 1),
+        dark: NSColor(calibratedRed: 0.29, green: 0.48, blue: 0.68, alpha: 1)
+    )
+    static let windowSurface = adaptive(
+        light: NSColor(calibratedWhite: 1, alpha: 0.18),
+        dark: NSColor(calibratedWhite: 0.02, alpha: 0.24)
+    )
+    static let footerSurface = adaptive(
+        light: NSColor(calibratedWhite: 1, alpha: 0.68),
+        dark: NSColor(calibratedWhite: 0.02, alpha: 0.68)
+    )
+    static let terminalSurface = adaptive(
+        light: NSColor(calibratedWhite: 1, alpha: 0.44),
+        dark: NSColor(calibratedRed: 0.075, green: 0.09, blue: 0.115, alpha: 0.40)
+    )
+    static let controlSurface = adaptive(
+        light: NSColor(calibratedWhite: 1, alpha: 0.52),
+        dark: NSColor(calibratedRed: 0.12, green: 0.145, blue: 0.18, alpha: 0.58)
+    )
+    static let statusSurface = adaptive(
+        light: NSColor(calibratedWhite: 1, alpha: 0.34),
+        dark: NSColor(calibratedWhite: 0, alpha: 0.20)
+    )
+    static let inactiveTabSurface = adaptive(
+        light: NSColor(calibratedWhite: 1, alpha: 0.24),
+        dark: NSColor(calibratedWhite: 1, alpha: 0.045)
+    )
+    static let textPrimary = adaptive(
+        light: NSColor(calibratedWhite: 0, alpha: 0.90),
+        dark: NSColor(calibratedWhite: 1, alpha: 0.96)
+    )
+    static let textSecondary = adaptive(
+        light: NSColor(calibratedWhite: 0, alpha: 0.64),
+        dark: NSColor(calibratedWhite: 1, alpha: 0.76)
+    )
+    static let hairline = adaptive(
+        light: NSColor(calibratedWhite: 0, alpha: 0.14),
+        dark: NSColor(calibratedWhite: 1, alpha: 0.14)
+    )
+
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
+}
+
 struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .sidebar
 
@@ -80,24 +133,26 @@ private struct ResizeGrip: NSViewRepresentable {
 
 struct MiniChatView: View {
     @ObservedObject var store: ChatStore
+    @AppStorage("ompMini.darkMode") private var isDarkMode = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
         ZStack {
-            VisualEffectBackground().ignoresSafeArea()
+            MiniTheme.windowSurface.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
-                Divider().opacity(0.35)
+                Rectangle().fill(MiniTheme.border.opacity(0.55)).frame(height: 1)
                 conversation
-                Divider().opacity(0.35)
+                Rectangle().fill(MiniTheme.hairline).frame(height: 1)
                 composer
             }
         }
         .frame(minWidth: 340, minHeight: 360)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .foregroundStyle(MiniTheme.textPrimary)
+        .clipShape(Rectangle())
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.primary.opacity(0.11), lineWidth: 1)
+            Rectangle()
+                .stroke(MiniTheme.border.opacity(0.72), lineWidth: 1)
                 .allowsHitTesting(false)
         }
         .overlay(alignment: .bottomTrailing) {
@@ -109,6 +164,7 @@ struct MiniChatView: View {
             store.connect()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { composerFocused = true }
         }
+        .environment(\.colorScheme, isDarkMode ? .dark : .light)
     }
 
     private var header: some View {
@@ -119,6 +175,7 @@ struct MiniChatView: View {
 
             Menu {
                 Button("New session…", systemImage: "square.and.pencil") { store.createSession() }
+                Button("Connect with collaboration link…", systemImage: "link") { store.joinCollab() }
                 Divider()
                 ForEach(Array(store.recentSessions.prefix(5))) { session in
                     Button(session.title) { store.openSession(session) }
@@ -135,12 +192,12 @@ struct MiniChatView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(store.currentTitle)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .lineLimit(1)
                     if !store.currentProject.isEmpty {
                         Text(store.currentProject)
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(MiniTheme.textSecondary)
                             .lineLimit(1)
                     }
                 }
@@ -154,24 +211,40 @@ struct MiniChatView: View {
             Spacer(minLength: 0)
 
             Text(store.status)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(MiniTheme.textPrimary)
                 .lineLimit(1)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(Color.primary.opacity(0.045)))
+                .background(Rectangle().fill(MiniTheme.statusSurface))
+                .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
                 .fixedSize()
 
+            Button { isDarkMode.toggle() } label: {
+                Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")
+                    .frame(width: 28, height: 28)
+                    .background(Rectangle().fill(MiniTheme.controlSurface))
+                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isDarkMode ? "Use light mode" : "Use dark mode")
+            .help(isDarkMode ? "Use light mode" : "Use dark mode")
+
             Menu {
-                Button("Sign in…", systemImage: "person.crop.circle") { store.login() }
-                Button("Choose model…", systemImage: "cpu") { store.chooseModel() }
-                Divider()
-                Button("Copy terminal command", systemImage: "terminal") { store.copyTerminalCommand() }
+                if store.isCollabSession {
+                    Button("Copy live-session link", systemImage: "link") { store.copyTerminalCommand() }
+                } else {
+                    Button("Sign in…", systemImage: "person.crop.circle") { store.login() }
+                    Button("Choose model…", systemImage: "cpu") { store.chooseModel() }
+                    Divider()
+                    Button("Copy terminal command", systemImage: "terminal") { store.copyTerminalCommand() }
+                }
                 Button("Copy transcript", systemImage: "doc.on.doc") { store.copyTranscript() }
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.primary.opacity(0.055)))
+                    .background(Rectangle().fill(MiniTheme.controlSurface))
+                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -183,7 +256,8 @@ struct MiniChatView: View {
             } label: {
                 Image(systemName: store.isPinned ? "pin.fill" : "pin")
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.primary.opacity(0.055)))
+                    .background(Rectangle().fill(MiniTheme.controlSurface))
+                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(store.isPinned ? "Disable always on top" : "Enable always on top")
@@ -193,32 +267,33 @@ struct MiniChatView: View {
                 Image(systemName: "minus")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.primary.opacity(0.055)))
+                    .background(Rectangle().fill(MiniTheme.controlSurface))
+                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Minimize chat popup")
             .help("Minimize popup")
         }
-        .padding(.horizontal, 11)
-        .frame(height: 48)
+        .padding(.horizontal, 9)
+        .frame(height: 42)
         .contentShape(Rectangle())
-        .background(Color.clear)
+        .background(MiniTheme.chromeBlue)
     }
 
     private var conversation: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 3) {
                     if store.messages.isEmpty {
                         VStack(spacing: 10) {
                             Image(systemName: "text.bubble")
                                 .font(.system(size: 26))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(MiniTheme.textSecondary)
                             Text(store.isTransitioning ? store.status : "Type to OMP while you browse")
                                 .font(.headline)
                             Text("This is a real OMP session in \(store.currentProject.isEmpty ? "your selected project" : store.currentProject). Drag the header to move this popup.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(MiniTheme.textSecondary)
                                 .multilineTextAlignment(.center)
                         }
                         .padding(.horizontal, 34)
@@ -228,7 +303,7 @@ struct MiniChatView: View {
                         MessageBubble(message: message).id(message.id)
                     }
                 }
-                .padding(12)
+                .padding(8)
             }
             .onChange(of: store.messages.last.map { "\($0.id.uuidString):\($0.text.count)" }) { _ in
                 guard let id = store.messages.last?.id else { return }
@@ -242,18 +317,20 @@ struct MiniChatView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message OMP…", text: $store.draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(MiniTheme.textPrimary)
                     .lineLimit(1...5)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .focused($composerFocused)
                     .onSubmit { store.sendDraft() }
-                    .disabled(!store.isConnected || store.isBusy || store.isTransitioning)
+                    .disabled(!store.canSubmit)
 
                 if store.isBusy {
                     Button { store.stopTurn() } label: {
                         Image(systemName: "stop.fill").frame(width: 26, height: 26)
                     }
                     .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.roundedRectangle)
                     .tint(.secondary)
                     .help("Stop")
                 } else {
@@ -261,51 +338,57 @@ struct MiniChatView: View {
                         Image(systemName: "arrow.up").frame(width: 26, height: 26)
                     }
                     .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.roundedRectangle)
                     .disabled(
                         store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || !store.isConnected
-                            || store.isTransitioning
+                            || !store.canSubmit
                     )
                     .help("Send")
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(Color.primary.opacity(0.06))
+                Rectangle()
+                    .fill(MiniTheme.terminalSurface)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(Color.primary.opacity(0.09), lineWidth: 1)
+                        Rectangle()
+                            .stroke(MiniTheme.hairline, lineWidth: 1)
                     }
             }
 
             Text("Return to send  ·  drag header to move  ·  drag corner to resize")
                 .frame(maxWidth: .infinity, alignment: .center)
-                .font(.system(size: 9.5))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(MiniTheme.textSecondary)
         }
-        .padding(10)
+        .padding(8)
     }
 }
 
 private struct MessageBubble: View {
     let message: ChatMessage
+    @AppStorage("ompMini.darkMode") private var isDarkMode = false
+    @State private var isDetailExpanded = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if message.role == .user { Spacer(minLength: 52) }
-            VStack(alignment: .leading, spacing: 5) {
-                if message.role == .assistant {
-                    Label("OMP", systemImage: "sparkles")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 4) {
+            if message.role == .user { Spacer(minLength: 34) }
+            VStack(alignment: .leading, spacing: 4) {
+                if message.role == .thinking {
+                    DisclosureGroup(isExpanded: $isDetailExpanded) {
+                        MarkdownText(value: message.text)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(MiniTheme.textSecondary)
+                            .padding(.top, 4)
+                    } label: {
+                        messageHeader
+                    }
+                    .disclosureGroupStyle(.automatic)
+                } else {
+                    if message.role != .user { messageHeader }
+                    messageBody
                 }
-                MarkdownText(value: message.text)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(message.role == .notice ? .secondary : .primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if message.isStreaming { ProgressView().controlSize(.mini) }
                 HStack {
                     Spacer()
                     Button { copy() } label: {
@@ -314,24 +397,102 @@ private struct MessageBubble: View {
                             .frame(width: 22, height: 18)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(MiniTheme.textSecondary)
                     .help("Copy message")
                 }
                 .frame(height: 18)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(backgroundColor))
-            if message.role != .user { Spacer(minLength: 26) }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(Rectangle().fill(backgroundColor))
+            .overlay(Rectangle().stroke(messageBorderColor, lineWidth: 1))
+            if message.role == .assistant || message.role == .notice { Spacer(minLength: 14) }
         }
         .contextMenu { Button("Copy Message", systemImage: "doc.on.doc") { copy() } }
     }
 
-    private var backgroundColor: Color {
+    @ViewBuilder
+    private var messageHeader: some View {
+        HStack(spacing: 5) {
+            Image(systemName: headerIcon)
+            Text(message.title ?? headerTitle)
+                .lineLimit(1)
+            if message.isStreaming {
+                ProgressView().controlSize(.mini)
+            }
+        }
+        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+        .foregroundStyle(message.isError ? Color.red : MiniTheme.textSecondary)
+    }
+
+    @ViewBuilder
+    private var messageBody: some View {
+        if message.role == .tool {
+            Text(message.text)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(message.isError ? Color.red : MiniTheme.textPrimary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            MarkdownText(value: message.text)
+                .font(.system(size: message.role == .status ? 11.5 : 12.5, design: .monospaced))
+                .foregroundStyle(
+                    message.role == .notice || message.role == .status
+                        ? MiniTheme.textSecondary
+                        : MiniTheme.textPrimary
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var headerTitle: String {
         switch message.role {
-        case .user: return Color.accentColor.opacity(0.16)
-        case .assistant: return Color.clear
-        case .notice: return Color.orange.opacity(0.12)
+        case .assistant: return "OMP"
+        case .notice: return "Notice"
+        case .tool: return "Tool"
+        case .thinking: return "Thinking"
+        case .status: return "Status"
+        case .user: return "You"
+        }
+    }
+
+    private var headerIcon: String {
+        switch message.role {
+        case .assistant: return "sparkles"
+        case .notice: return "exclamationmark.circle"
+        case .tool: return message.isError ? "terminal.fill" : "terminal"
+        case .thinking: return "brain"
+        case .status: return "info.circle"
+        case .user: return "person"
+        }
+    }
+
+    private var backgroundColor: Color {
+        if isDarkMode {
+            switch message.role {
+            case .user: return Color(red: 0.075, green: 0.16, blue: 0.27).opacity(0.42)
+            case .assistant: return Color(red: 0.065, green: 0.078, blue: 0.10).opacity(0.34)
+            case .notice: return Color(red: 0.17, green: 0.12, blue: 0.055).opacity(0.42)
+            case .tool: return message.isError ? Color.red.opacity(0.18) : MiniTheme.terminalSurface
+            case .thinking: return Color(red: 0.12, green: 0.08, blue: 0.15).opacity(0.38)
+            case .status: return message.isError ? Color.red.opacity(0.18) : Color(red: 0.06, green: 0.11, blue: 0.17).opacity(0.38)
+            }
+        }
+        switch message.role {
+        case .user: return Color(red: 0.64, green: 0.78, blue: 0.93).opacity(0.46)
+        case .assistant: return Color.white.opacity(0.36)
+        case .notice: return Color(red: 1.0, green: 0.88, blue: 0.56).opacity(0.42)
+        case .tool: return message.isError ? Color.red.opacity(0.18) : MiniTheme.terminalSurface
+        case .thinking: return Color(red: 0.82, green: 0.74, blue: 0.92).opacity(0.38)
+        case .status: return message.isError ? Color.red.opacity(0.18) : Color(red: 0.68, green: 0.82, blue: 0.96).opacity(0.38)
+        }
+    }
+
+    private var messageBorderColor: Color {
+        switch message.role {
+        case .user: return MiniTheme.border.opacity(0.46)
+        case .notice: return Color.orange.opacity(0.28)
+        case .tool, .assistant, .thinking, .status: return MiniTheme.hairline
         }
     }
 
@@ -343,41 +504,72 @@ private struct MessageBubble: View {
 
 struct FooterView: View {
     @ObservedObject var store: ChatStore
+    @AppStorage("ompMini.darkMode") private var isDarkMode = false
     var onHideBar: () -> Void
 
-    private var primary: [OmpSessionSummary] { Array(store.recentSessions.prefix(5)) }
-    private var overflow: [OmpSessionSummary] { Array(store.recentSessions.dropFirst(5)) }
+    private var primaryLive: [LiveSessionSummary] { Array(store.liveSessions.prefix(5)) }
+    private var regularCapacity: Int { max(0, 5 - primaryLive.count) }
+    private var nonLiveSessions: [OmpSessionSummary] {
+        let liveIDs = Set(store.liveSessions.map(\.id))
+        return store.recentSessions.filter { !liveIDs.contains($0.id) }
+    }
+    private var primary: [OmpSessionSummary] { Array(nonLiveSessions.prefix(regularCapacity)) }
+    private var overflowLive: [LiveSessionSummary] { Array(store.liveSessions.dropFirst(5)) }
+    private var overflow: [OmpSessionSummary] { Array(nonLiveSessions.dropFirst(regularCapacity)) }
 
     var body: some View {
         ZStack {
-            VisualEffectBackground().ignoresSafeArea()
-            HStack(spacing: 10) {
+            VisualEffectBackground(material: .hudWindow).ignoresSafeArea()
+            MiniTheme.footerSurface.ignoresSafeArea()
+            HStack(spacing: 0) {
                 HStack(spacing: 7) {
                     Image(systemName: "terminal.fill")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
                     Text("OMP")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
                 }
-                .padding(.leading, 4)
+                .padding(.horizontal, 10)
 
                 Divider().frame(height: 24)
 
-                HStack(spacing: 6) {
-                    ForEach(primary) { session in
+                HStack(spacing: 0) {
+                    ForEach(primaryLive) { session in
                         FooterTab(
-                            session: session,
+                            title: session.title,
+                            projectName: session.projectName,
+                            preview: session.preview,
+                            live: true,
                             unread: store.unreadSessionIDs.contains(session.id),
                             working: store.workingSessionIDs.contains(session.id),
-                            selected: store.selectedSessionID == session.id
+                            open: store.openSessionIDs.contains(session.id)
+                        ) { store.openLiveSession(session) }
+                    }
+                    ForEach(primary) { session in
+                        FooterTab(
+                            title: session.title,
+                            projectName: session.projectName,
+                            preview: session.preview,
+                            live: false,
+                            unread: store.unreadSessionIDs.contains(session.id),
+                            working: store.workingSessionIDs.contains(session.id),
+                            open: store.openSessionIDs.contains(session.id)
                         ) { store.openSession(session) }
                     }
                 }
 
                 Spacer(minLength: 0)
 
-                if !overflow.isEmpty {
+                if !overflow.isEmpty || !overflowLive.isEmpty {
                     Menu {
+                        ForEach(overflowLive) { session in
+                            Button {
+                                store.openLiveSession(session)
+                            } label: {
+                                Label(session.title, systemImage: "dot.radiowaves.left.and.right")
+                            }
+                        }
+                        if !overflowLive.isEmpty, !overflow.isEmpty { Divider() }
                         ForEach(overflow) { session in
                             Button {
                                 store.openSession(session)
@@ -402,11 +594,12 @@ struct FooterView: View {
                                 Circle().fill(Color.blue).frame(width: 7, height: 7)
                             }
                             Image(systemName: "ellipsis")
-                            Text("More").font(.system(size: 11.5, weight: .medium))
+                            Text("More").font(.system(size: 11, weight: .medium, design: .monospaced))
                         }
                         .padding(.horizontal, 12)
                         .frame(height: 32)
-                        .background(Capsule(style: .continuous).fill(Color.primary.opacity(0.05)))
+                        .background(Rectangle().fill(MiniTheme.controlSurface))
+                        .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
@@ -416,34 +609,51 @@ struct FooterView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
                         .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.accentColor.opacity(0.16)))
+                        .background(Rectangle().fill(MiniTheme.chromeBlue))
+                        .overlay(Rectangle().stroke(MiniTheme.border.opacity(0.55), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .help("New session")
+
+                Button { isDarkMode.toggle() } label: {
+                    Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Rectangle().fill(MiniTheme.controlSurface))
+                        .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help(isDarkMode ? "Use light mode" : "Use dark mode")
 
                 Button(action: onHideBar) {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.primary.opacity(0.05)))
+                        .background(Rectangle().fill(MiniTheme.controlSurface))
+                        .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .help("Hide footer")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 0)
+            .padding(.vertical, 5)
         }
         .overlay(alignment: .top) {
-            Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
+            Rectangle().fill(MiniTheme.border.opacity(0.72)).frame(height: 1)
         }
+        .foregroundStyle(MiniTheme.textPrimary)
+        .environment(\.colorScheme, isDarkMode ? .dark : .light)
     }
 }
 
 private struct FooterTab: View {
-    let session: OmpSessionSummary
+    let title: String
+    let projectName: String
+    let preview: String
+    let live: Bool
     let unread: Bool
     let working: Bool
-    let selected: Bool
+    let open: Bool
     let action: () -> Void
 
     var body: some View {
@@ -454,18 +664,22 @@ private struct FooterTab: View {
                         ProgressView()
                             .controlSize(.mini)
                             .scaleEffect(0.72)
+                    } else if live && !unread {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
                     } else {
                         Circle().fill(unread ? Color.blue : Color.clear)
                     }
                 }
                 .frame(width: 9, height: 9)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(session.title)
-                        .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
+                    Text(title)
+                        .font(.system(size: 11, weight: open ? .bold : .regular, design: .monospaced))
                         .lineLimit(1)
-                    Text(session.projectName)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
+                    Text(projectName)
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(MiniTheme.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -473,36 +687,38 @@ private struct FooterTab: View {
             .padding(.horizontal, 12)
             .frame(height: 34)
             .background {
-                Capsule(style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.17) : Color.primary.opacity(0.045))
+                Rectangle()
+                    .fill(open ? MiniTheme.chromeBlue : MiniTheme.inactiveTabSurface)
                     .overlay {
-                        Capsule(style: .continuous)
-                            .stroke(selected ? Color.accentColor.opacity(0.3) : Color.primary.opacity(0.055), lineWidth: 1)
+                        Rectangle()
+                            .stroke(open ? MiniTheme.border.opacity(0.62) : MiniTheme.hairline, lineWidth: 1)
                     }
             }
         }
         .buttonStyle(.plain)
         .frame(minWidth: 108, maxWidth: 180)
-        .help(working ? "OMP is responding…" : session.preview)
+        .help(working ? "OMP is responding…" : preview)
     }
 }
 
 struct FloatingFooterControlView: View {
     @ObservedObject var store: ChatStore
+    @AppStorage("ompMini.darkMode") private var isDarkMode = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             ZStack {
                 VisualEffectBackground(material: .popover)
+                MiniTheme.footerSurface
                 Image(systemName: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(store.isFooterVisible ? Color.primary : Color.accentColor)
             }
             .frame(width: 38, height: 38)
-            .clipShape(Circle())
+            .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay {
-                Circle()
+                RoundedRectangle(cornerRadius: 4)
                     .stroke(
                         store.isFooterVisible ? Color.primary.opacity(0.16) : Color.accentColor.opacity(0.55),
                         lineWidth: 1
@@ -512,5 +728,6 @@ struct FloatingFooterControlView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(store.isFooterVisible ? "Hide OMP footer" : "Show OMP footer")
         .help(store.isFooterVisible ? "Hide OMP footer" : "Show OMP footer")
+        .environment(\.colorScheme, isDarkMode ? .dark : .light)
     }
 }

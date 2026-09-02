@@ -4,8 +4,11 @@ import SwiftUI
 
 @MainActor
 final class ChatStore: ObservableObject {
+    private static let transcriptItemLimit = 240
+
     @Published var messages: [ChatMessage] = []
     @Published var recentSessions: [OmpSessionSummary] = []
+    @Published var liveSessions: [LiveSessionSummary] = []
     @Published var unreadSessionIDs = Set<String>()
     @Published var draft = ""
     @Published var status = "Starting…"
@@ -23,7 +26,18 @@ final class ChatStore: ObservableObject {
     @Published var isTransitioning = false
     @Published var isPinned = true
     @Published var isFooterVisible = true
+    @Published var openSessionIDs = Set<String>()
     @Published var workingSessionIDs = Set<String>()
+    @Published var isReadOnlyCollab = false
+
+    var isCollabSession: Bool {
+        if case .collab = startupTarget { return true }
+        return false
+    }
+
+    var canSubmit: Bool {
+        isConnected && !isTransitioning && !isReadOnlyCollab && (!isBusy || isCollabSession)
+    }
 
     var onHide: (() -> Void)?
     var onTogglePin: (() -> Void)?
@@ -34,9 +48,17 @@ final class ChatStore: ObservableObject {
     var onWorkingStateChanged: ((String?, Bool) -> Void)?
     var onOpenSession: ((OmpSessionSummary) -> Void)?
     var onNewSession: (() -> Void)?
+    var onJoinCollab: (() -> Void)?
+    var onLiveMetadataChanged: ((String, String, String) -> Void)?
+    var onOpenLiveSession: ((LiveSessionSummary) -> Void)?
 
     private let startupTarget: ChatStartupTarget
     private var connection: OmpRPCConnection?
+    private var collabConnection: OmpCollabConnection?
+    private var collabLink: OmpCollabLink?
+    private var collabEntries: [[String: Any]] = []
+    private var collabSnapshotEntries: [[String: Any]] = []
+    private var collabSnapshotComplete = false
     private var sessionPath: String?
     private var cwd: String
     private var streamingMessageID: UUID?
@@ -47,6 +69,7 @@ final class ChatStore: ObservableObject {
     private var isSynchronizingFromDisk = false
     private var supportsLeafNavigation = false
     private var suppressedPromptResultIDs = Set<String>()
+    private var activeToolContexts: [String: ActiveToolContext] = [:]
 
     private var managesUnread: Bool {
         if case .listOnly = startupTarget { return true }
@@ -69,6 +92,14 @@ final class ChatStore: ObservableObject {
         case .newSession(let directory):
             cwd = directory
             currentProject = URL(fileURLWithPath: directory).lastPathComponent
+        case .collab(let link, let session):
+            cwd = session?.cwd ?? ""
+            collabLink = link
+            sessionPath = session?.path
+            selectedSessionID = session?.id ?? link.sessionID
+            currentTitle = session?.title ?? "Live OMP session"
+            currentProject = session?.projectName ?? "Encrypted relay"
+            status = "Connecting…"
         }
         refreshSessions()
     }
@@ -84,6 +115,8 @@ final class ChatStore: ObservableObject {
         externalSyncTimer = nil
         connection?.stop()
         connection = nil
+        collabConnection?.close()
+        collabConnection = nil
     }
 
     func refreshSessions() {
@@ -121,13 +154,39 @@ final class ChatStore: ObservableObject {
         onNewSession?()
     }
 
+    func joinCollab() {
+        onJoinCollab?()
+    }
+
+    func openLiveSession(_ summary: LiveSessionSummary) {
+        markRead(summary.id)
+        onOpenLiveSession?(summary)
+    }
+
+    func upsertLiveSession(id: String, title: String, projectName: String) {
+        let summary = LiveSessionSummary(id: id, title: title, projectName: projectName)
+        if let index = liveSessions.firstIndex(where: { $0.id == id }) { liveSessions[index] = summary }
+        else { liveSessions.append(summary) }
+    }
+
+    func replaceLiveSessions(_ sessions: [LiveSessionSummary]) {
+        liveSessions = sessions
+    }
+
     func toggleFooter() {
         onToggleFooter?()
     }
 
     func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, isConnected, !isBusy, let connection else { return }
+        guard !text.isEmpty, canSubmit else { return }
+        if isCollabSession {
+            draft = ""
+            collabConnection?.sendPrompt(text)
+            status = isBusy ? "Steering…" : "Sent…"
+            return
+        }
+        guard let connection else { return }
         if hasUnseenDiskChanges() {
             synchronizeFromDisk { [weak self] in self?.sendDraft() }
             return
@@ -153,12 +212,21 @@ final class ChatStore: ObservableObject {
     }
 
     func stopTurn() {
+        if isCollabSession {
+            collabConnection?.sendAbort()
+            status = "Stopping…"
+            return
+        }
         connection?.request("abort", timeout: 10) { [weak self] result in
             if case .failure(let error) = result { self?.addNotice(error.localizedDescription) }
         }
     }
 
     func chooseModel() {
+        if isCollabSession {
+            addNotice("Change the model from the host terminal.")
+            return
+        }
         guard let connection else { return }
         status = "Loading models…"
         connection.request("get_available_models", timeout: 60) { [weak self] result in
@@ -175,6 +243,10 @@ final class ChatStore: ObservableObject {
     }
 
     func login() {
+        if isCollabSession {
+            addNotice("Sign in from the host terminal.")
+            return
+        }
         guard let connection else { return }
         status = "Checking sign-in…"
         connection.request("get_login_providers", timeout: 60) { [weak self] result in
@@ -194,7 +266,14 @@ final class ChatStore: ObservableObject {
     func copyTranscript() {
         let text = messages.map { message in
             let label: String
-            switch message.role { case .user: label = "You"; case .assistant: label = "OMP"; case .notice: label = "Notice" }
+            switch message.role {
+            case .user: label = "You"
+            case .assistant: label = "OMP"
+            case .notice: label = "Notice"
+            case .tool: label = "Tool · \(message.title ?? "OMP")"
+            case .thinking: label = "Thinking"
+            case .status: label = message.title ?? "Status"
+            }
             return "\(label): \(message.text)"
         }.joined(separator: "\n\n")
         NSPasteboard.general.clearContents()
@@ -202,6 +281,12 @@ final class ChatStore: ObservableObject {
     }
 
     func copyTerminalCommand() {
+        if let collabLink {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(collabLink.original, forType: .string)
+            status = "Live link copied"
+            return
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let installedOMP = home.appendingPathComponent(".local/bin/omp")
         let executable: String
@@ -223,6 +308,10 @@ final class ChatStore: ObservableObject {
     }
 
     private func startConnection() {
+        if let collabLink {
+            startCollabConnection(collabLink)
+            return
+        }
         let rpc = OmpRPCConnection()
         connection = rpc
         isTransitioning = true
@@ -248,6 +337,278 @@ final class ChatStore: ObservableObject {
                 self.status = "Ready"
                 self.prepareConnectedSession()
             }
+        }
+    }
+
+    private func startCollabConnection(_ link: OmpCollabLink) {
+        guard collabConnection == nil else { return }
+        isTransitioning = true
+        isConnected = false
+        status = "Connecting…"
+        let collab = OmpCollabConnection(link: link)
+        collabConnection = collab
+        collab.onPhaseChanged = { [weak self] phase, _ in
+            guard let self else { return }
+            self.status = phase
+            if phase.hasPrefix("Connection lost") || phase == "Reconnecting…" {
+                self.isConnected = false
+                self.isTransitioning = true
+            } else if !["Connecting…", "Waiting for host…"].contains(phase) {
+                self.isConnected = false
+                self.isTransitioning = false
+                self.isBusy = false
+                self.addNotice(phase)
+            }
+        }
+        collab.onFrame = { [weak self] frame in self?.handleCollabFrame(frame) }
+        collab.connect()
+    }
+
+    private func handleCollabFrame(_ frame: [String: Any]) {
+        guard let type = frame["t"] as? String else { return }
+        switch type {
+        case "welcome":
+            collabSnapshotEntries = []
+            collabSnapshotComplete = false
+            isReadOnlyCollab = frame["readOnly"] as? Bool == true
+            if let header = frame["header"] as? [String: Any] {
+                applyCollabMetadata(header: header, state: frame["state"] as? [String: Any])
+            }
+            if let state = frame["state"] as? [String: Any] { applyCollabState(state, notifyCompletion: false) }
+            if frame["entryCount"] as? Int == 0 { finishCollabSnapshot() }
+
+        case "snapshot-chunk":
+            if let entries = frame["entries"] as? [[String: Any]] { collabSnapshotEntries.append(contentsOf: entries) }
+            if frame["final"] as? Bool == true { finishCollabSnapshot() }
+
+        case "entry":
+            guard collabSnapshotComplete, let entry = frame["entry"] as? [String: Any] else { return }
+            collabEntries.append(entry)
+            let message = entry["message"] as? [String: Any]
+            let isAssistantMessage = entry["type"] as? String == "message" && message?["role"] as? String == "assistant"
+            rebuildCollabMessages(preservingStream: !isAssistantMessage)
+
+        case "event":
+            if let event = frame["event"] as? [String: Any] { handleCollabEvent(event) }
+
+        case "state":
+            if let state = frame["state"] as? [String: Any] {
+                applyCollabMetadata(header: nil, state: state)
+                applyCollabState(state, notifyCompletion: true)
+            }
+
+        case "ui-request":
+            if let request = frame["request"] as? [String: Any] { presentCollabRequest(request) }
+
+        case "error":
+            addNotice(frame["message"] as? String ?? "The OMP host reported an error.")
+
+        case "bye":
+            isConnected = false
+            isTransitioning = false
+            isBusy = false
+            status = "Session ended"
+            addNotice(frame["reason"] as? String ?? "The live session ended.")
+
+        default: break
+        }
+    }
+
+    private func finishCollabSnapshot() {
+        collabEntries = collabSnapshotEntries
+        collabSnapshotEntries = []
+        collabSnapshotComplete = true
+        streamingMessageID = nil
+        messages = Array(parseCollabEntries(collabEntries).suffix(Self.transcriptItemLimit))
+        isConnected = true
+        isTransitioning = false
+        status = isReadOnlyCollab ? "Live · read only" : "Live"
+        if let id = selectedSessionID { onLiveMetadataChanged?(id, currentTitle, currentProject) }
+    }
+
+    private func applyCollabMetadata(header: [String: Any]?, state: [String: Any]?) {
+        if let title = state?["sessionName"] as? String ?? header?["title"] as? String, !title.isEmpty {
+            currentTitle = title
+        }
+        if let hostCwd = state?["cwd"] as? String ?? header?["cwd"] as? String, !hostCwd.isEmpty {
+            cwd = hostCwd
+            let project = URL(fileURLWithPath: hostCwd).lastPathComponent
+            currentProject = project.isEmpty ? hostCwd : project
+        }
+        if let model = state?["model"] as? [String: Any],
+           let provider = model["provider"] as? String,
+           let id = model["id"] as? String {
+            currentModel = "\(provider) / \(id)"
+        }
+        if let id = selectedSessionID { onLiveMetadataChanged?(id, currentTitle, currentProject) }
+    }
+
+    private func applyCollabState(_ state: [String: Any], notifyCompletion: Bool) {
+        let busy = state["isStreaming"] as? Bool == true
+        setCollabBusy(busy, notifyCompletion: notifyCompletion)
+        guard collabSnapshotComplete else { return }
+        if busy {
+            status = state["isAborting"] as? Bool == true ? "Stopping…" : "Thinking…"
+        } else {
+            let participants = (state["participants"] as? [[String: Any]])?.count ?? 1
+            status = participants > 1 ? "Live · \(participants) connected" : (isReadOnlyCollab ? "Live · read only" : "Live")
+        }
+    }
+
+    private func setCollabBusy(_ busy: Bool, notifyCompletion: Bool) {
+        let wasBusy = isBusy
+        isBusy = busy
+        if notifyCompletion, wasBusy, !busy {
+            onResponseCompleted?(selectedSessionID)
+        }
+    }
+
+    private func handleCollabEvent(_ event: [String: Any]) {
+        guard let type = event["type"] as? String else { return }
+        switch type {
+        case "agent_start":
+            setCollabBusy(true, notifyCompletion: false)
+            status = "Thinking…"
+        case "agent_end":
+            setCollabBusy(false, notifyCompletion: true)
+            status = isReadOnlyCollab ? "Live · read only" : "Live"
+        case "message_start", "message_update":
+            guard let message = event["message"] as? [String: Any],
+                  message["role"] as? String == "assistant" else { return }
+            let text = SessionCatalog.textContent(message["content"])
+            if !text.isEmpty { setCollabStreaming(text) }
+        case "message_end":
+            guard let message = event["message"] as? [String: Any],
+                  message["role"] as? String == "assistant" else { return }
+            let text = SessionCatalog.textContent(message["content"])
+            if !text.isEmpty { finishStreaming(with: text) }
+        case "tool_execution_start":
+            updateToolMessage(from: event, phase: .started)
+        case "tool_execution_update":
+            updateToolMessage(from: event, phase: .updated)
+        case "tool_execution_end":
+            updateToolMessage(from: event, phase: .finished)
+        case "notice":
+            addNotice(event["message"] as? String ?? "OMP notification")
+        case "auto_retry_start":
+            status = "Retrying…"
+            let attempt = event["attempt"] as? Int ?? 1
+            let maximum = event["maxAttempts"] as? Int ?? attempt
+            let reason = event["errorMessage"] as? String ?? "The model request failed."
+            addStatus(title: "Retry \(attempt)/\(maximum)", text: reason, isError: true)
+        case "auto_retry_end":
+            if event["success"] as? Bool == false {
+                addStatus(title: "Retry failed", text: event["finalError"] as? String ?? "OMP could not recover.", isError: true)
+            }
+        case "auto_compaction_start":
+            status = "Compacting…"
+            addStatus(title: "Compacting context", text: event["reason"] as? String ?? "Preparing more context space.")
+        case "auto_compaction_end":
+            if event["aborted"] as? Bool == true,
+               let error = event["errorMessage"] as? String {
+                addStatus(title: "Compaction stopped", text: error, isError: true)
+            }
+        default: break
+        }
+    }
+
+    private func setCollabStreaming(_ fullText: String) {
+        if let id = streamingMessageID, let index = messages.firstIndex(where: { $0.id == id }) {
+            messages[index].text = fullText
+            messages[index].isStreaming = true
+        } else {
+            let message = ChatMessage(role: .assistant, text: fullText, isStreaming: true)
+            streamingMessageID = message.id
+            messages.append(message)
+        }
+    }
+
+    private func rebuildCollabMessages(preservingStream: Bool) {
+        let stream = preservingStream ? streamingMessageID.flatMap { id in messages.first(where: { $0.id == id }) } : nil
+        messages = Array(parseCollabEntries(collabEntries).suffix(Self.transcriptItemLimit))
+        if let stream { messages.append(stream) }
+        else { streamingMessageID = nil }
+    }
+
+    private func parseCollabEntries(_ entries: [[String: Any]]) -> [ChatMessage] {
+        let rawMessages = entries.compactMap { entry -> [String: Any]? in
+            guard entry["type"] as? String == "message" else { return nil }
+            return entry["message"] as? [String: Any]
+        }
+        let toolResults = collectToolResults(rawMessages)
+        let knownToolCalls = collectToolCallIDs(rawMessages)
+
+        return entries.flatMap { entry -> [ChatMessage] in
+            switch entry["type"] as? String {
+            case "message":
+                guard let message = entry["message"] as? [String: Any],
+                      let role = message["role"] as? String else { return [] }
+                if role == "toolResult",
+                   let callID = message["toolCallId"] as? String,
+                   knownToolCalls.contains(callID) { return [] }
+                return renderWireMessage(message, toolResults: toolResults)
+            case "custom_message":
+                guard entry["display"] as? Bool != false else { return [] }
+                let text = SessionCatalog.textContent(entry["content"])
+                guard !text.isEmpty else { return [] }
+                if entry["customType"] as? String == "collab-prompt" {
+                    return [ChatMessage(role: .user, text: text)]
+                }
+                return [ChatMessage(
+                    role: .notice,
+                    title: entry["customType"] as? String,
+                    text: text
+                )]
+            case "compaction":
+                let summary = entry["shortSummary"] as? String ?? entry["summary"] as? String ?? "Earlier context was summarized."
+                let tokens = entry["tokensBefore"] as? Int
+                let title = tokens.map { "Context compacted · \(Self.formatTokenCount($0)) tokens" } ?? "Context compacted"
+                return [ChatMessage(role: .status, title: title, text: summary)]
+            case "branch_summary":
+                return [ChatMessage(
+                    role: .status,
+                    title: "Branch summary",
+                    text: entry["summary"] as? String ?? "The conversation continued from another branch."
+                )]
+            case "model_change":
+                guard let model = entry["model"] as? String else { return [] }
+                return [ChatMessage(role: .status, title: "Model changed", text: model)]
+            case "thinking_level_change":
+                let level = entry["thinkingLevel"] as? String ?? "default"
+                return [ChatMessage(role: .status, title: "Thinking level", text: level)]
+            default: return []
+            }
+        }
+    }
+
+    private func presentCollabRequest(_ request: [String: Any]) {
+        guard !isReadOnlyCollab, let requestID = request["reqId"] as? Int else { return }
+        let alert = NSAlert()
+        alert.messageText = request["title"] as? String ?? "OMP needs input"
+        if request["kind"] as? String == "select" {
+            let rawOptions = request["options"] as? [Any] ?? []
+            let options = rawOptions.compactMap { option -> String? in
+                if let text = option as? String { return text }
+                return (option as? [String: Any])?["label"] as? String
+            }
+            let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 28))
+            popup.addItems(withTitles: options)
+            if let initial = request["initialIndex"] as? Int, options.indices.contains(initial) { popup.selectItem(at: initial) }
+            alert.accessoryView = popup
+            alert.addButton(withTitle: "Submit")
+            alert.addButton(withTitle: "Cancel")
+            let value = alert.runModal() == .alertFirstButtonReturn && popup.indexOfSelectedItem >= 0
+                ? options[popup.indexOfSelectedItem]
+                : nil
+            collabConnection?.sendUIResponse(requestID: requestID, value: value)
+        } else {
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 26))
+            field.stringValue = request["prefill"] as? String ?? ""
+            alert.accessoryView = field
+            alert.addButton(withTitle: "Submit")
+            alert.addButton(withTitle: "Cancel")
+            let value = alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+            collabConnection?.sendUIResponse(requestID: requestID, value: value)
         }
     }
 
@@ -309,7 +670,9 @@ final class ChatStore: ObservableObject {
                 return
             }
             let parsed = self.parseMessages(rawMessages)
-            if !parsed.isEmpty || !self.isBusy { self.messages = Array(parsed.suffix(80)) }
+            if !parsed.isEmpty || !self.isBusy {
+                self.messages = Array(parsed.suffix(Self.transcriptItemLimit))
+            }
             if rememberSignature { self.rememberCurrentFileSignature() }
             completion?()
         }
@@ -332,6 +695,12 @@ final class ChatStore: ObservableObject {
                 let text = SessionCatalog.textContent(raw["content"])
                 if !text.isEmpty { finishStreaming(with: text) }
             }
+        case "tool_execution_start":
+            updateToolMessage(from: event, phase: .started)
+        case "tool_execution_update":
+            updateToolMessage(from: event, phase: .updated)
+        case "tool_execution_end":
+            updateToolMessage(from: event, phase: .finished)
         case "agent_end":
             if event["isTerminal"] as? Bool == false { return }
             finishAgentTurn()
@@ -341,7 +710,28 @@ final class ChatStore: ObservableObject {
             if event["agentInvoked"] as? Bool == false { finishLocalPrompt() }
         case "command_output":
             let text = SessionCatalog.textContent(event["content"] ?? event["message"] ?? event["output"])
-            if !text.isEmpty { messages.append(ChatMessage(role: .assistant, text: text)) }
+            if !text.isEmpty { messages.append(ChatMessage(role: .tool, title: "Command output", text: text)) }
+        case "auto_retry_start":
+            status = "Retrying…"
+            let attempt = event["attempt"] as? Int ?? 1
+            let maximum = event["maxAttempts"] as? Int ?? attempt
+            addStatus(
+                title: "Retry \(attempt)/\(maximum)",
+                text: event["errorMessage"] as? String ?? "The model request failed.",
+                isError: true
+            )
+        case "auto_retry_end":
+            if event["success"] as? Bool == false {
+                addStatus(title: "Retry failed", text: event["finalError"] as? String ?? "OMP could not recover.", isError: true)
+            }
+        case "auto_compaction_start":
+            status = "Compacting…"
+            addStatus(title: "Compacting context", text: event["reason"] as? String ?? "Preparing more context space.")
+        case "auto_compaction_end":
+            if event["aborted"] as? Bool == true,
+               let error = event["errorMessage"] as? String {
+                addStatus(title: "Compaction stopped", text: error, isError: true)
+            }
         case "model_changed": refreshState()
         case "session_switch":
             if !isSynchronizingFromDisk { refreshStateAndHistory() }
@@ -401,16 +791,212 @@ final class ChatStore: ObservableObject {
     }
 
     private func parseMessages(_ raw: [[String: Any]]) -> [ChatMessage] {
-        raw.compactMap { item in
-            guard let role = item["role"] as? String else { return nil }
-            let text = SessionCatalog.textContent(item["content"])
-            guard !text.isEmpty else { return nil }
-            switch role {
-            case "user": return ChatMessage(role: .user, text: text)
-            case "assistant": return ChatMessage(role: .assistant, text: text)
-            default: return nil
+        let toolResults = collectToolResults(raw)
+        let knownToolCalls = collectToolCallIDs(raw)
+        return raw.flatMap { message -> [ChatMessage] in
+            if message["role"] as? String == "toolResult",
+               let callID = message["toolCallId"] as? String,
+               knownToolCalls.contains(callID) { return [] }
+            return renderWireMessage(message, toolResults: toolResults)
+        }
+    }
+
+    private func collectToolResults(_ messages: [[String: Any]]) -> [String: [String: Any]] {
+        var results: [String: [String: Any]] = [:]
+        for message in messages where message["role"] as? String == "toolResult" {
+            if let callID = message["toolCallId"] as? String { results[callID] = message }
+        }
+        return results
+    }
+
+    private func collectToolCallIDs(_ messages: [[String: Any]]) -> Set<String> {
+        var ids = Set<String>()
+        for message in messages where message["role"] as? String == "assistant" {
+            guard let blocks = message["content"] as? [[String: Any]] else { continue }
+            for block in blocks where block["type"] as? String == "toolCall" {
+                if let callID = block["id"] as? String { ids.insert(callID) }
             }
         }
+        return ids
+    }
+
+    private func renderWireMessage(
+        _ message: [String: Any],
+        toolResults: [String: [String: Any]]
+    ) -> [ChatMessage] {
+        guard let role = message["role"] as? String else { return [] }
+        switch role {
+        case "user":
+            let text = SessionCatalog.textContent(message["content"])
+            return text.isEmpty ? [] : [ChatMessage(role: .user, text: text)]
+
+        case "assistant":
+            guard let blocks = message["content"] as? [[String: Any]] else {
+                let text = SessionCatalog.textContent(message["content"])
+                return text.isEmpty ? [] : [ChatMessage(role: .assistant, text: text)]
+            }
+            var rendered: [ChatMessage] = []
+            for block in blocks {
+                switch block["type"] as? String {
+                case "text", "input_text", "output_text":
+                    guard let text = block["text"] as? String,
+                          !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    rendered.append(ChatMessage(role: .assistant, text: text))
+                case "thinking":
+                    guard let text = block["thinking"] as? String,
+                          !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    rendered.append(ChatMessage(role: .thinking, title: "Thinking", text: text))
+                case "redactedThinking":
+                    rendered.append(ChatMessage(role: .thinking, title: "Thinking · redacted", text: "Redacted by the model provider."))
+                case "toolCall":
+                    guard let callID = block["id"] as? String else { continue }
+                    let name = block["name"] as? String ?? "tool"
+                    let result = toolResults[callID]
+                    rendered.append(ChatMessage(
+                        role: .tool,
+                        title: name,
+                        text: Self.formatToolBody(
+                            intent: block["intent"] as? String,
+                            arguments: block["arguments"],
+                            result: result,
+                            running: result == nil
+                        ),
+                        isStreaming: result == nil,
+                        isError: result?["isError"] as? Bool == true,
+                        detailID: callID
+                    ))
+                default: continue
+                }
+            }
+            if let stopReason = message["stopReason"] as? String,
+               ["error", "aborted", "length"].contains(stopReason) {
+                let detail = message["errorMessage"] as? String ?? "The response ended with \(stopReason)."
+                rendered.append(ChatMessage(
+                    role: .status,
+                    title: stopReason == "error" ? "Response error" : "Response \(stopReason)",
+                    text: detail,
+                    isError: stopReason == "error"
+                ))
+            }
+            return rendered
+
+        case "toolResult":
+            let callID = message["toolCallId"] as? String
+            return [ChatMessage(
+                role: .tool,
+                title: message["toolName"] as? String ?? "tool",
+                text: Self.formatToolBody(intent: nil, arguments: nil, result: message, running: false),
+                isError: message["isError"] as? Bool == true,
+                detailID: callID
+            )]
+
+        default: return []
+        }
+    }
+
+    private struct ActiveToolContext {
+        var name: String
+        var intent: String?
+        var arguments: Any?
+    }
+
+    private enum ToolPhase { case started, updated, finished }
+
+    private func updateToolMessage(from event: [String: Any], phase: ToolPhase) {
+        guard let callID = event["toolCallId"] as? String else { return }
+        var context = activeToolContexts[callID] ?? ActiveToolContext(
+            name: event["toolName"] as? String ?? "tool",
+            intent: nil,
+            arguments: nil
+        )
+        if let name = event["toolName"] as? String { context.name = name }
+        if let intent = event["intent"] as? String { context.intent = intent }
+        if let arguments = event["args"] { context.arguments = arguments }
+        if phase != .finished { activeToolContexts[callID] = context }
+
+        let result: Any?
+        switch phase {
+        case .started: result = nil
+        case .updated: result = event["partialResult"]
+        case .finished: result = event["result"]
+        }
+        let running = phase != .finished
+        let body = Self.formatToolBody(
+            intent: context.intent,
+            arguments: context.arguments,
+            result: result,
+            running: running
+        )
+        if let index = messages.lastIndex(where: { $0.role == .tool && $0.detailID == callID }) {
+            messages[index].title = context.name
+            messages[index].text = body
+            messages[index].isStreaming = running
+            messages[index].isError = event["isError"] as? Bool == true
+        } else {
+            messages.append(ChatMessage(
+                role: .tool,
+                title: context.name,
+                text: body,
+                isStreaming: running,
+                isError: event["isError"] as? Bool == true,
+                detailID: callID
+            ))
+        }
+        if phase == .finished { activeToolContexts.removeValue(forKey: callID) }
+    }
+
+    private static func formatToolBody(
+        intent: String?,
+        arguments: Any?,
+        result: Any?,
+        running: Bool
+    ) -> String {
+        var sections: [String] = []
+        if let intent = intent?.trimmingCharacters(in: .whitespacesAndNewlines), !intent.isEmpty {
+            sections.append(intent)
+        }
+        let input = displayValue(arguments)
+        if !input.isEmpty && input != "{}" { sections.append("Input\n\(input)") }
+        let output = displayToolResult(result)
+        if !output.isEmpty { sections.append("Output\n\(output)") }
+        else if running { sections.append("Running…") }
+        else { sections.append("Completed with no output") }
+        return sections.joined(separator: "\n\n")
+    }
+
+    private static func displayToolResult(_ value: Any?) -> String {
+        guard let value, !(value is NSNull) else { return "" }
+        if let object = value as? [String: Any] {
+            let content = SessionCatalog.textContent(object["content"])
+            if !content.isEmpty { return content }
+            for key in ["output", "message", "text"] {
+                let nested = displayValue(object[key])
+                if !nested.isEmpty { return nested }
+            }
+            if let details = object["details"] { return displayValue(details) }
+        }
+        return displayValue(value)
+    }
+
+    private static func displayValue(_ value: Any?) -> String {
+        guard let value, !(value is NSNull) else { return "" }
+        if let string = value as? String { return string.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let blocks = value as? [[String: Any]] {
+            let text = SessionCatalog.textContent(blocks)
+            if !text.isEmpty { return text }
+        }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return String(describing: value)
+    }
+
+    private static func formatTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
+        if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000) }
+        return String(count)
     }
 
     private func recomputeUnread(_ sessions: [OmpSessionSummary]) {
@@ -420,15 +1006,21 @@ final class ChatStore: ObservableObject {
             }
             didEstablishUnreadBaseline = true
         }
+        let liveUnread = unreadSessionIDs.filter { $0.hasPrefix("collab:") }
         unreadSessionIDs = Set(sessions.compactMap { session in
             let lastRead = UserDefaults.standard.double(forKey: "ompMini.lastRead.\(session.id)")
             return session.modifiedAt.timeIntervalSince1970 > lastRead ? session.id : nil
-        })
+        }).union(liveUnread)
     }
 
     private func addNotice(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         messages.append(ChatMessage(role: .notice, text: text))
+    }
+
+    private func addStatus(title: String, text: String, isError: Bool = false) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        messages.append(ChatMessage(role: .status, title: title, text: text, isError: isError))
     }
 
     private func presentLoginPicker(_ providers: [[String: Any]]) {

@@ -2,6 +2,8 @@
 .DS_Store
 outputs/
 Vendor/omp
+Vendor/omp-sync
+Vendor/omp-sync.version
 Vendor/omp.download
 Vendor/omp.version
 Vendor/SHA256SUMS.txt

@@ -14,7 +14,8 @@ let package = Package(
             path: "Sources/OmpMiniChat",
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("Carbon")
+                .linkedFramework("Carbon"),
+                .linkedFramework("CryptoKit")
             ]
         )
     ]

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 final class SessionCatalog {
     static let shared = SessionCatalog()
@@ -9,6 +10,39 @@ final class SessionCatalog {
     var sessionsRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".omp/agent/sessions", isDirectory: true)
+    }
+
+    var liveSessionsRoot: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".omp/mini-chat/live", isDirectory: true)
+    }
+
+    func listLiveSessions() -> [OmpLiveSessionRecord] {
+        let root = liveSessionsRoot
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        let decoder = JSONDecoder()
+        var newestBySession: [String: OmpLiveSessionRecord] = [:]
+        for url in urls where url.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: url),
+                  let record = try? decoder.decode(OmpLiveSessionRecord.self, from: data),
+                  record.version == 1,
+                  record.pid > 0,
+                  kill(record.pid, 0) == 0,
+                  (try? OmpCollabLink.parse(record.link)) != nil else {
+                removeStaleLiveRecord(at: url)
+                continue
+            }
+            if let existing = newestBySession[record.sessionId], existing.summary.modifiedAt >= record.summary.modifiedAt {
+                continue
+            }
+            newestBySession[record.sessionId] = record
+        }
+        return newestBySession.values.sorted { $0.summary.modifiedAt > $1.summary.modifiedAt }
     }
 
     func listActiveSessions() -> [OmpSessionSummary] {
@@ -131,6 +165,10 @@ final class SessionCatalog {
         }
         .joined(separator: "\n")
         .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func removeStaleLiveRecord(at url: URL) {
+        try? fileManager.removeItem(at: url)
     }
 }
 
