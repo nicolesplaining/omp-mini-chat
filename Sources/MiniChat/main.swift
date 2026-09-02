@@ -108,7 +108,7 @@ final class AppServerConnection {
                     "clientInfo": [
                         "name": "codex_mini_chat",
                         "title": "Codex Mini Chat",
-                        "version": "2.4.0"
+                        "version": "2.4.1"
                     ],
                     "capabilities": ["experimentalApi": true]
                 ]
@@ -1482,14 +1482,17 @@ struct MarkdownText: View {
     let value: String
 
     var body: some View {
-        if let attributed = try? AttributedString(
-            markdown: value,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) {
-            Text(attributed)
-        } else {
-            Text(value)
+        Group {
+            if let attributed = try? AttributedString(
+                markdown: value,
+                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+            ) {
+                Text(attributed)
+            } else {
+                Text(value)
+            }
         }
+        .textSelection(.enabled)
     }
 }
 
@@ -1512,6 +1515,23 @@ struct MessageBubble: View {
                 if message.isStreaming {
                     ProgressView().controlSize(.mini)
                 }
+                HStack {
+                    Spacer()
+                    Button {
+                        copyMessage()
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 22, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Copy message")
+                    .help("Copy message")
+                }
+                .frame(height: 18)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -1521,6 +1541,11 @@ struct MessageBubble: View {
             }
             if message.role != .user { Spacer(minLength: 26) }
         }
+        .contextMenu {
+            Button("Copy Message", systemImage: "doc.on.doc") {
+                copyMessage()
+            }
+        }
     }
 
     private var backgroundColor: Color {
@@ -1529,6 +1554,11 @@ struct MessageBubble: View {
         case .assistant: return Color.clear
         case .notice: return Color.orange.opacity(0.12)
         }
+    }
+
+    private func copyMessage() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.text, forType: .string)
     }
 }
 
@@ -1862,6 +1892,27 @@ struct ChatTabStripView: View {
 final class MiniPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard modifiers.contains(.command),
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        let action: Selector?
+        switch key {
+        case "c": action = #selector(NSText.copy(_:))
+        case "v": action = #selector(NSText.paste(_:))
+        case "x": action = #selector(NSText.cut(_:))
+        case "a": action = #selector(NSText.selectAll(_:))
+        default: action = nil
+        }
+        if let action, NSApp.sendAction(action, to: nil, from: self) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 final class ChatTabPanel: NSPanel {
