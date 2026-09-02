@@ -11,8 +11,8 @@ private enum MiniTheme {
         dark: NSColor(calibratedRed: 0.29, green: 0.48, blue: 0.68, alpha: 1)
     )
     static let windowSurface = adaptive(
-        light: NSColor(calibratedWhite: 1, alpha: 0.18),
-        dark: NSColor(calibratedWhite: 0.02, alpha: 0.24)
+        light: NSColor(calibratedWhite: 1, alpha: 0.50),
+        dark: NSColor(calibratedWhite: 0.02, alpha: 0.52)
     )
     static let footerSurface = adaptive(
         light: NSColor(calibratedWhite: 1, alpha: 0.68),
