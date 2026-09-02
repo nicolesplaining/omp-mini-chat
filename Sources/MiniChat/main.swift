@@ -107,7 +107,7 @@ final class AppServerConnection {
                     "clientInfo": [
                         "name": "codex_mini_chat",
                         "title": "Codex Mini Chat",
-                        "version": "2.3.0"
+                        "version": "2.3.1"
                     ],
                     "capabilities": ["experimentalApi": true]
                 ]
@@ -345,8 +345,6 @@ final class ChatStore: ObservableObject {
     private var hasConnected = false
     private var didPerformStartup = false
     private var currentCwd = ""
-    private var queuedSyncToken: UUID?
-    private var queuedSubmissionID: String?
 
     private var ownedThreadIDs: Set<String> {
         Set(UserDefaults.standard.stringArray(forKey: "ownedThreadIDs") ?? [])
@@ -362,7 +360,6 @@ final class ChatStore: ObservableObject {
             self.isConnected = false
             self.isBusy = false
             self.isTransitioning = false
-            self.clearWriteConflict()
             self.status = "Disconnected"
             self.addNotice(message)
         }
@@ -478,7 +475,6 @@ final class ChatStore: ObservableObject {
 
     func resume(_ thread: RecentThread) {
         guard !isBusy, !isTransitioning else { return }
-        clearWriteConflict()
         selectedThreadID = thread.id
         markThreadRead(thread.id)
         if currentThreadID == thread.id, readOnlySource == nil {
@@ -555,6 +551,14 @@ final class ChatStore: ObservableObject {
                     self.selectedThreadID = source.id
                     self.currentTitle = source.title
                     self.messages = Self.parseHistory(thread)
+                    let recoveryKey = "recoveredDraft.\(source.id)"
+                    if self.draft.isEmpty,
+                       let recovered = UserDefaults.standard.string(forKey: recoveryKey),
+                       !recovered.isEmpty {
+                        self.draft = recovered
+                        UserDefaults.standard.removeObject(forKey: recoveryKey)
+                        self.addNotice("Recovered the message that was stuck in the old queue. Press Send to try it again.")
+                    }
                     self.addNotice("Viewing this Codex task. Sending continues this exact task and never creates a branch.")
                     self.status = "Ready"
                     self.isTransitioning = false
@@ -609,7 +613,7 @@ final class ChatStore: ObservableObject {
                 case .failure(let error):
                     self.isTransitioning = false
                     if error.localizedDescription.lowercased().contains("active writer") {
-                        self.queueOnActiveWriter(source, text: text)
+                        self.handleActiveWriter(source, text: text)
                     } else {
                         self.status = "Couldn’t continue chat"
                         self.draft = text
@@ -620,94 +624,44 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func clearWriteConflict() {
-        queuedSyncToken = nil
-        queuedSubmissionID = nil
-    }
+    private func handleActiveWriter(_ source: RecentThread, text: String) {
+        status = "Task is open in Codex"
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Continue this task in Mini Chat?"
+        alert.informativeText = "Codex currently allows only one app to write a task at a time. Quit the Codex desktop app, then Mini Chat can send this message to the exact same task without creating a branch."
+        alert.addButton(withTitle: "Quit Codex & Send")
+        alert.addButton(withTitle: "Keep Draft")
+        alert.window.level = .floating
 
-    private func queueOnActiveWriter(_ source: RecentThread, text: String) {
-        let token = UUID()
-        queuedSyncToken = token
-        queuedSubmissionID = nil
-        status = "Syncing with Codex…"
-        connection.request(
-            method: "thread/queue/add",
-            params: [
-                "threadId": source.id,
-                "clientUserMessageId": UUID().uuidString,
-                "input": [["type": "text", "text": text]]
-            ],
-            timeout: 30
-        ) { [weak self] result in
-            Task { @MainActor in
-                guard let self, self.queuedSyncToken == token else { return }
-                switch result {
-                case .success(let payload):
-                    self.queuedSubmissionID = (payload["queuedSubmission"] as? [String: Any])?["id"] as? String
-                    self.messages.append(ChatMessage(role: .user, text: Self.compactText(text)))
-                    self.currentThreadID = nil
-                    self.readOnlySource = source
-                    self.currentCwd = source.cwd
-                    self.selectedThreadID = source.id
-                    self.isBusy = true
-                    self.status = "Sent to original task…"
-                    self.pollQueuedThread(source, text: text, token: token, attempt: 0)
-                case .failure(let error):
-                    self.queuedSyncToken = nil
-                    self.isBusy = false
-                    self.status = "Couldn’t sync"
-                    self.draft = text
-                    self.addNotice(error.localizedDescription)
-                }
-            }
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            draft = text
+            status = "Draft kept"
+            return
         }
-    }
 
-    private func pollQueuedThread(_ source: RecentThread, text: String, token: UUID, attempt: Int) {
-        guard queuedSyncToken == token else { return }
-        connection.request(
-            method: "thread/read",
-            params: ["threadId": source.id, "includeTurns": true],
-            timeout: 30
-        ) { [weak self] result in
-            Task { @MainActor in
-                guard let self, self.queuedSyncToken == token else { return }
-                if case .success(let payload) = result,
-                   let thread = payload["thread"] as? [String: Any] {
-                    let history = Self.parseHistory(thread)
-                    let expectedText = Self.compactText(text)
-                    if let userIndex = history.lastIndex(where: {
-                        $0.role == .user && $0.text == expectedText
-                    }), history.dropFirst(userIndex + 1).contains(where: { $0.role == .assistant }) {
-                        self.messages = history
-                        self.queuedSyncToken = nil
-                        self.queuedSubmissionID = nil
-                        self.isBusy = false
-                        self.status = "Ready"
-                        self.loadRecentThreads()
-                        self.onResponseCompleted?(source.id)
-                        return
-                    }
-                }
+        let codexApps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        guard !codexApps.isEmpty else {
+            draft = text
+            status = "Close the task owner and retry"
+            addNotice("Another Codex client still owns this task. Close it, then press Send again.")
+            return
+        }
 
-                guard attempt < 120 else {
-                    self.queuedSyncToken = nil
-                    self.queuedSubmissionID = nil
-                    self.isBusy = false
-                    self.status = "Queued in Codex"
-                    self.addNotice("The message is in the original task’s queue. Codex will run it from that same task—no branch was created.")
-                    return
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                    self?.pollQueuedThread(source, text: text, token: token, attempt: attempt + 1)
-                }
-            }
+        isTransitioning = true
+        status = "Closing Codex…"
+        codexApps.forEach { _ = $0.terminate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            self.isTransitioning = false
+            self.continueOriginal(source, sendAfter: text)
         }
     }
 
     func createNewChat(sendAfter text: String? = nil) {
         guard isConnected, !isBusy, !isTransitioning else { return }
-        clearWriteConflict()
         isTransitioning = true
         messages = []
         currentThreadID = nil
@@ -783,32 +737,6 @@ final class ChatStore: ObservableObject {
     }
 
     func stopTurn() {
-        if queuedSyncToken != nil {
-            queuedSyncToken = nil
-            isBusy = false
-            guard let source = readOnlySource, let queuedSubmissionID else {
-                status = "Queued in Codex"
-                addNotice("Mini Chat stopped waiting. The message may already be running in the original task.")
-                return
-            }
-            self.queuedSubmissionID = nil
-            status = "Canceling queued message…"
-            connection.request(
-                method: "thread/queue/delete",
-                params: ["threadId": source.id, "queuedSubmissionId": queuedSubmissionID]
-            ) { [weak self] result in
-                Task { @MainActor in
-                    guard let self else { return }
-                    if case .success(let payload) = result, payload["deleted"] as? Bool == true {
-                        self.status = "Queue canceled"
-                    } else {
-                        self.status = "Already running in Codex"
-                        self.addNotice("The queued message had already started in the original task.")
-                    }
-                }
-            }
-            return
-        }
         guard let threadID = currentThreadID, let turnID = activeTurnID else { return }
         connection.request(
             method: "turn/interrupt",
