@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon.HIToolbox
 import SwiftUI
 
@@ -107,7 +108,7 @@ final class AppServerConnection {
                     "clientInfo": [
                         "name": "codex_mini_chat",
                         "title": "Codex Mini Chat",
-                        "version": "2.3.1"
+                        "version": "2.4.0"
                     ],
                     "capabilities": ["experimentalApi": true]
                 ]
@@ -256,15 +257,238 @@ final class AppServerConnection {
 
     private static func findCodex() -> String? {
         var candidates = [
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex",
             "/Applications/ChatGPT.app/Contents/Resources/codex",
-            "/Applications/Codex.app/Contents/Resources/codex"
+            "/Applications/Codex.app/Contents/Resources/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex"
         ]
         if let path = ProcessInfo.processInfo.environment["PATH"] {
             candidates.append(contentsOf: path.split(separator: ":").map { "\($0)/codex" })
         }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+}
+
+// MARK: - Codex desktop controller
+
+enum DesktopControllerError: LocalizedError {
+    case accessibilityRequired
+    case codexUnavailable
+    case windowUnavailable
+    case invalidThread
+
+    var errorDescription: String? {
+        switch self {
+        case .accessibilityRequired:
+            return "Allow Codex Mini Chat in System Settings → Privacy & Security → Accessibility, then try again."
+        case .codexUnavailable:
+            return "The Codex desktop app could not be opened."
+        case .windowUnavailable:
+            return "Mini Chat could not locate the Codex composer. Bring the Codex window onto this display and try again."
+        case .invalidThread:
+            return "This Codex task has an invalid identifier."
+        }
+    }
+}
+
+@MainActor
+final class CodexDesktopController {
+    static let shared = CodexDesktopController()
+
+    private struct Submission {
+        let threadID: String
+        let text: String
+        let completion: (Result<Void, Error>) -> Void
+    }
+
+    private var pending: [Submission] = []
+    private var isSubmitting = false
+    private var activationObserver: NSObjectProtocol?
+    private var lastExternalApp: NSRunningApplication?
+
+    func startTrackingApplications() {
+        guard activationObserver == nil else { return }
+        rememberIfExternal(NSWorkspace.shared.frontmostApplication)
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            Task { @MainActor in self?.rememberIfExternal(app) }
+        }
+    }
+
+    func isCodexRunning() -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").isEmpty
+    }
+
+    func submit(threadID: String, text: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        startTrackingApplications()
+        pending.append(Submission(threadID: threadID, text: text, completion: completion))
+        runNextIfNeeded()
+    }
+
+    private func runNextIfNeeded() {
+        guard !isSubmitting, !pending.isEmpty else { return }
+        isSubmitting = true
+        let submission = pending.removeFirst()
+
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        guard AXIsProcessTrustedWithOptions(options) else {
+            finish(submission, result: .failure(DesktopControllerError.accessibilityRequired))
+            return
+        }
+        guard UUID(uuidString: submission.threadID) != nil,
+              let url = URL(string: "codex://threads/\(submission.threadID)") else {
+            finish(submission, result: .failure(DesktopControllerError.invalidThread))
+            return
+        }
+        guard NSWorkspace.shared.open(url) else {
+            finish(submission, result: .failure(DesktopControllerError.codexUnavailable))
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            self?.perform(submission, attempt: 0)
+        }
+    }
+
+    private func perform(_ submission: Submission, attempt: Int) {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first else {
+            if attempt < 15 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.perform(submission, attempt: attempt + 1)
+                }
+            } else {
+                finish(submission, result: .failure(DesktopControllerError.codexUnavailable))
+            }
+            return
+        }
+
+        app.activate(options: [])
+        guard let frame = focusedWindowFrame(for: app.processIdentifier) else {
+            if attempt < 15 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.perform(submission, attempt: attempt + 1)
+                }
+            } else {
+                finish(submission, result: .failure(DesktopControllerError.windowUnavailable))
+            }
+            return
+        }
+
+        let composerPoint = CGPoint(x: frame.midX, y: frame.maxY - min(82, frame.height * 0.1))
+        postMouseClick(at: composerPoint)
+        let clipboard = captureClipboard()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(submission.text, forType: .string)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self else { return }
+            self.postKey(CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                guard let self else { return }
+                self.postKey(CGKeyCode(kVK_Return))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    guard let self else { return }
+                    // This also covers the optional Cmd-Return send preference. If
+                    // Return already sent, Cmd-Return on the empty composer is inert.
+                    self.postKey(CGKeyCode(kVK_Return), flags: .maskCommand)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                        guard let self else { return }
+                        self.restoreClipboard(clipboard)
+                        self.lastExternalApp?.activate(options: [])
+                        self.finish(submission, result: .success(()))
+                    }
+                }
+            }
+        }
+    }
+
+    private func rememberIfExternal(_ app: NSRunningApplication?) {
+        guard let app,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              app.bundleIdentifier != "com.openai.codex",
+              app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        lastExternalApp = app
+    }
+
+    private func focusedWindowFrame(for processIdentifier: pid_t) -> CGRect? {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        var value: CFTypeRef?
+        var window: AXUIElement?
+        if AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &value) == .success {
+            window = (value as! AXUIElement)
+        } else if AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
+                  let windows = value as? [AXUIElement] {
+            window = windows.first
+        }
+        guard let window else { return nil }
+
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let positionAX = positionValue as! AXValue?,
+              let sizeAX = sizeValue as! AXValue? else { return nil }
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionAX, .cgPoint, &position),
+              AXValueGetValue(sizeAX, .cgSize, &size) else { return nil }
+        return CGRect(origin: position, size: size)
+    }
+
+    private func postMouseClick(at point: CGPoint) {
+        CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseDown,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        )?.post(tap: .cghidEventTap)
+        CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseUp,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        )?.post(tap: .cghidEventTap)
+    }
+
+    private func postKey(_ key: CGKeyCode, flags: CGEventFlags = []) {
+        let down = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: true)
+        down?.flags = flags
+        down?.post(tap: .cghidEventTap)
+        let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false)
+        up?.flags = flags
+        up?.post(tap: .cghidEventTap)
+    }
+
+    private func captureClipboard() -> [[String: Data]] {
+        (NSPasteboard.general.pasteboardItems ?? []).map { item in
+            item.types.reduce(into: [:]) { result, type in
+                if let data = item.data(forType: type) { result[type.rawValue] = data }
+            }
+        }
+    }
+
+    private func restoreClipboard(_ snapshot: [[String: Data]]) {
+        let items = snapshot.map { values -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in values {
+                item.setData(data, forType: NSPasteboard.PasteboardType(type))
+            }
+            return item
+        }
+        NSPasteboard.general.clearContents()
+        if !items.isEmpty { NSPasteboard.general.writeObjects(items) }
+    }
+
+    private func finish(_ submission: Submission, result: Result<Void, Error>) {
+        submission.completion(result)
+        isSubmitting = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.runNextIfNeeded()
+        }
     }
 }
 
@@ -345,6 +569,7 @@ final class ChatStore: ObservableObject {
     private var hasConnected = false
     private var didPerformStartup = false
     private var currentCwd = ""
+    private var desktopSyncToken: UUID?
 
     private var ownedThreadIDs: Set<String> {
         Set(UserDefaults.standard.stringArray(forKey: "ownedThreadIDs") ?? [])
@@ -613,7 +838,7 @@ final class ChatStore: ObservableObject {
                 case .failure(let error):
                     self.isTransitioning = false
                     if error.localizedDescription.lowercased().contains("active writer") {
-                        self.handleActiveWriter(source, text: text)
+                        self.sendThroughDesktop(source, text: text)
                     } else {
                         self.status = "Couldn’t continue chat"
                         self.draft = text
@@ -624,40 +849,166 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func handleActiveWriter(_ source: RecentThread, text: String) {
-        status = "Task is open in Codex"
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Continue this task in Mini Chat?"
-        alert.informativeText = "Codex currently allows only one app to write a task at a time. Quit the Codex desktop app, then Mini Chat can send this message to the exact same task without creating a branch."
-        alert.addButton(withTitle: "Quit Codex & Send")
-        alert.addButton(withTitle: "Keep Draft")
-        alert.window.level = .floating
-
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            draft = text
-            status = "Draft kept"
-            return
-        }
-
-        let codexApps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
-            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        guard !codexApps.isEmpty else {
-            draft = text
-            status = "Close the task owner and retry"
-            addNotice("Another Codex client still owns this task. Close it, then press Send again.")
-            return
-        }
-
+    private func sendThroughDesktop(_ source: RecentThread, text: String) {
+        let token = UUID()
+        desktopSyncToken = token
         isTransitioning = true
-        status = "Closing Codex…"
-        codexApps.forEach { _ = $0.terminate() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self else { return }
-            self.isTransitioning = false
-            self.continueOriginal(source, sendAfter: text)
+        status = "Sending through Codex…"
+        let baselineItemIDs = Set(messages.compactMap(\.itemID))
+
+        CodexDesktopController.shared.submit(threadID: source.id, text: text) { [weak self] result in
+            Task { @MainActor in
+                guard let self, self.desktopSyncToken == token else { return }
+                self.isTransitioning = false
+                switch result {
+                case .success:
+                    self.currentThreadID = nil
+                    self.readOnlySource = source
+                    self.currentCwd = source.cwd
+                    self.selectedThreadID = source.id
+                    self.messages.append(ChatMessage(role: .user, text: Self.compactText(text)))
+                    self.isBusy = true
+                    self.status = "Working in Codex…"
+                    self.pollDesktopThread(
+                        source,
+                        sentText: text,
+                        baselineItemIDs: baselineItemIDs,
+                        token: token,
+                        attempt: 0
+                    )
+                case .failure(let error):
+                    self.desktopSyncToken = nil
+                    self.draft = text
+                    self.status = "Couldn’t control Codex"
+                    self.addNotice(error.localizedDescription)
+                }
+            }
         }
+    }
+
+    private func pollDesktopThread(
+        _ source: RecentThread,
+        sentText: String,
+        baselineItemIDs: Set<String>,
+        token: UUID,
+        attempt: Int
+    ) {
+        guard desktopSyncToken == token else { return }
+        connection.request(
+            method: "thread/read",
+            params: ["threadId": source.id, "includeTurns": true],
+            timeout: 30
+        ) { [weak self] result in
+            Task { @MainActor in
+                guard let self, self.desktopSyncToken == token else { return }
+                switch result {
+                case .success(let payload):
+                    guard let thread = payload["thread"] as? [String: Any] else {
+                        self.finishDesktopPolling(
+                            source,
+                            token: token,
+                            notice: AppServerError.invalidResponse.localizedDescription
+                        )
+                        return
+                    }
+                    let history = Self.parseHistory(thread)
+                    let expected = Self.comparableText(sentText)
+                    let sentIndex = history.lastIndex { message in
+                        guard message.role == .user,
+                              Self.comparableText(message.text) == expected else { return false }
+                        guard let itemID = message.itemID else { return true }
+                        return !baselineItemIDs.contains(itemID)
+                    }
+                    let hasNewReply: Bool
+                    if let sentIndex {
+                        hasNewReply = history.indices.contains(sentIndex + 1)
+                            && history[(sentIndex + 1)...].contains { message in
+                                guard message.role == .assistant else { return false }
+                                guard let itemID = message.itemID else { return true }
+                                return !baselineItemIDs.contains(itemID)
+                            }
+                    } else {
+                        hasNewReply = false
+                    }
+                    let matchingTurnState = Self.matchingTurnState(
+                        in: thread,
+                        sentText: sentText,
+                        baselineItemIDs: baselineItemIDs
+                    )
+
+                    if matchingTurnState == "completed" {
+                        self.messages = history
+                        if !hasNewReply {
+                            self.addNotice("Codex finished without a visible text response. Open the task in Codex for full details.")
+                        }
+                        self.desktopSyncToken = nil
+                        self.isBusy = false
+                        self.status = "Ready"
+                        self.markThreadRead(source.id)
+                        self.onResponseCompleted?(source.id)
+                        self.loadRecentThreads()
+                        return
+                    }
+                    if matchingTurnState == "failed" || matchingTurnState == "interrupted" {
+                        self.messages = history
+                        self.finishDesktopPolling(
+                            source,
+                            token: token,
+                            notice: matchingTurnState == "failed"
+                                ? "The turn failed in Codex. Open the task to see its error details."
+                                : "The turn was stopped in Codex."
+                        )
+                        return
+                    }
+
+                    if sentIndex != nil {
+                        self.messages = history
+                        self.status = "Working in Codex…"
+                    }
+                    if attempt >= 300 {
+                        self.finishDesktopPolling(
+                            source,
+                            token: token,
+                            notice: "Codex is still working or waiting for approval. Open Codex to continue; this task remains fully synced."
+                        )
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                        self?.pollDesktopThread(
+                            source,
+                            sentText: sentText,
+                            baselineItemIDs: baselineItemIDs,
+                            token: token,
+                            attempt: attempt + 1
+                        )
+                    }
+                case .failure(let error):
+                    if attempt < 300 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                            self?.pollDesktopThread(
+                                source,
+                                sentText: sentText,
+                                baselineItemIDs: baselineItemIDs,
+                                token: token,
+                                attempt: attempt + 1
+                            )
+                        }
+                    } else {
+                        self.finishDesktopPolling(source, token: token, notice: error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishDesktopPolling(_ source: RecentThread, token: UUID, notice: String) {
+        guard desktopSyncToken == token else { return }
+        desktopSyncToken = nil
+        isBusy = false
+        status = "Check Codex"
+        addNotice(notice)
+        noteThreadActivity(source.id)
+        loadRecentThreads()
     }
 
     func createNewChat(sendAfter text: String? = nil) {
@@ -722,7 +1073,11 @@ final class ChatStore: ObservableObject {
         guard !text.isEmpty, isConnected, !isBusy, !isTransitioning else { return }
         draft = ""
         if currentThreadID == nil, let source = readOnlySource {
-            continueOriginal(source, sendAfter: text)
+            if CodexDesktopController.shared.isCodexRunning() {
+                sendThroughDesktop(source, text: text)
+            } else {
+                continueOriginal(source, sendAfter: text)
+            }
         } else if currentThreadID == nil {
             createNewChat(sendAfter: text)
         }
@@ -737,6 +1092,14 @@ final class ChatStore: ObservableObject {
     }
 
     func stopTurn() {
+        if desktopSyncToken != nil {
+            desktopSyncToken = nil
+            isBusy = false
+            isTransitioning = false
+            status = "Still running in Codex"
+            addNotice("Mini Chat stopped watching. The task is still running in Codex, where you can stop it if needed.")
+            return
+        }
         guard let threadID = currentThreadID, let turnID = activeTurnID else { return }
         connection.request(
             method: "turn/interrupt",
@@ -1057,13 +1420,46 @@ final class ChatStore: ObservableObject {
             }
         }
         // A mini overlay should stay quick even when the underlying Codex task has a
-        // very large transcript. The full history remains in the task and its branch.
+        // very large transcript. The full history remains in the original task.
         return Array(output.suffix(30))
+    }
+
+    private static func matchingTurnState(
+        in thread: [String: Any],
+        sentText: String,
+        baselineItemIDs: Set<String>
+    ) -> String? {
+        let expected = comparableText(sentText)
+        let turns = thread["turns"] as? [[String: Any]] ?? []
+        for turn in turns.reversed() {
+            let items = turn["items"] as? [[String: Any]] ?? []
+            let hasSentMessage = items.contains { item in
+                guard item["type"] as? String == "userMessage" else { return false }
+                if let itemID = item["id"] as? String, baselineItemIDs.contains(itemID) { return false }
+                let content = item["content"] as? [[String: Any]] ?? []
+                let text = content.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                return comparableText(text) == expected
+            }
+            if hasSentMessage {
+                return (turn["status"] as? String ?? "").lowercased()
+            }
+        }
+        return nil
     }
 
     private static func compactText(_ text: String) -> String {
         guard text.count > maxDisplayCharacters else { return text }
         return String(text.prefix(maxDisplayCharacters)) + truncationNotice
+    }
+
+    private static func comparableText(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(
+                of: #"\\([\\`*_{}\[\]()#+\-.!])"#,
+                with: "$1",
+                options: .regularExpression
+            )
     }
 }
 
@@ -1550,6 +1946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSWindow.allowsAutomaticWindowTabbing = false
+        CodexDesktopController.shared.startTrackingApplications()
 
         let tabPanel = ChatTabPanel(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 48),
