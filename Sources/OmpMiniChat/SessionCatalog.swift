@@ -45,6 +45,24 @@ final class SessionCatalog {
         return newestBySession.values.sorted { $0.summary.modifiedAt > $1.summary.modifiedAt }
     }
 
+    func requestLiveSessionRefresh(sessionID: String, roomID: String) {
+        guard !sessionID.isEmpty, !roomID.isEmpty else { return }
+        let root = liveSessionsRoot
+        try? fileManager.createDirectory(
+            at: root,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let safeID = sessionID.replacingOccurrences(
+            of: #"[^A-Za-z0-9_-]"#,
+            with: "_",
+            options: .regularExpression
+        )
+        let request = root.appendingPathComponent("\(safeID).refresh")
+        try? Data(roomID.utf8).write(to: request, options: .atomic)
+        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: request.path)
+    }
+
     func listActiveSessions() -> [OmpSessionSummary] {
         let root = sessionsRoot.standardizedFileURL
         guard let enumerator = fileManager.enumerator(

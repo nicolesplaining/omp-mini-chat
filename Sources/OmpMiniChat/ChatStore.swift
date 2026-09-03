@@ -51,6 +51,7 @@ final class ChatStore: ObservableObject {
     var onJoinCollab: (() -> Void)?
     var onLiveMetadataChanged: ((String, String, String) -> Void)?
     var onOpenLiveSession: ((LiveSessionSummary) -> Void)?
+    var onCollabUnavailable: ((String) -> Void)?
 
     private let startupTarget: ChatStartupTarget
     private var connection: OmpRPCConnection?
@@ -358,6 +359,11 @@ final class ChatStore: ObservableObject {
                 self.isTransitioning = false
                 self.isBusy = false
                 self.addNotice(phase)
+                if phase == "No such live room"
+                    || phase == "Room closed"
+                    || phase == "Timed out waiting for the OMP host" {
+                    self.onCollabUnavailable?(phase)
+                }
             }
         }
         collab.onFrame = { [weak self] frame in self?.handleCollabFrame(frame) }

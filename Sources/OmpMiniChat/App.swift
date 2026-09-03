@@ -401,6 +401,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
         store.onLiveMetadataChanged = { [weak self] id, title, project in
             self?.footerStore.upsertLiveSession(id: id, title: title, projectName: project)
         }
+        store.onCollabUnavailable = { [weak self, weak popup] _ in
+            guard let self,
+                  let popup,
+                  popup.autoSynced,
+                  let id = popup.sessionID,
+                  let roomID = popup.collabRoomID else { return }
+            SessionCatalog.shared.requestLiveSessionRefresh(sessionID: id, roomID: roomID)
+            self.footerStore.setWorking(false, for: id)
+        }
         store.onSelectedSessionChanged = { [weak self, weak popup] id in
             guard let self, let popup, let id else { return }
             popup.sessionID = id

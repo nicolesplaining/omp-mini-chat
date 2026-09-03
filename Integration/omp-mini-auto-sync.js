@@ -28,6 +28,21 @@ export default function ompMiniAutoSync(pi) {
     }
   };
 
+  const consumeRefreshRequest = async (sessionId) => {
+    const requestPath = path.join(registryRoot, `${sessionId}.refresh`);
+    try {
+      const requestedRoom = (await fs.readFile(requestPath, "utf8")).trim();
+      await fs.unlink(requestPath);
+      return requestedRoom || undefined;
+    } catch (error) {
+      if (error?.code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+
+  const roomIdFromLink = (link) =>
+    link.match(/(?:^|\/r\/)([A-Za-z0-9_-]{10,64})[.#]/)?.[1];
+
   const writeRecord = async (ctx, info) => {
     const sessionId = ctx.sessionManager.getSessionId();
     if (!sessionId) return;
@@ -57,6 +72,13 @@ export default function ompMiniAutoSync(pi) {
   const hostCurrentSession = async (ctx) => {
     if (ctx.mode !== "tui" || !ctx.collab) return;
     try {
+      const sessionId = ctx.sessionManager.getSessionId();
+      if (!sessionId) return;
+      const current = ctx.collab.info();
+      const requestedRoom = await consumeRefreshRequest(sessionId);
+      if (requestedRoom && current && roomIdFromLink(current.link) === requestedRoom) {
+        await ctx.collab.stop("refreshing Mini Chat live sync");
+      }
       const info = ctx.collab.info() || (await ctx.collab.start());
       await writeRecord(ctx, info);
       lastError = undefined;
