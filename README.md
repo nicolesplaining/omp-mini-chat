@@ -71,6 +71,7 @@ OMP credentials are shared with your ordinary terminal. To use OMP outside Mini 
 ## Everyday use
 
 - Use the embedded **Terminal** for slash commands, completion menus, settings, shell commands, keyboard shortcuts, and interactive extensions. This runs OMP itself, using [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) for terminal rendering.
+- Existing chats load automatically from `~/.omp/agent/sessions`, with no age cutoff. The footer shows the five most recently updated chats. Open **More** to choose an older chat. Live and saved chats share the same list.
 - Adjust transparency with **… → Opacity…** in a popup. The slider controls chat and footer background opacity from 10–100%, with 100% fully opaque. Text stays crisp. The default matches the original background, 50% in light mode or 52% in dark mode. **Reset to default** restores it, and your setting is saved automatically.
 - New sessions started with **+** run inside Mini Chat. Minimizing a popup keeps its terminal running; quitting Mini Chat ends the terminals it owns.
 - Sessions started in an external terminal still appear automatically in the chat view. Their terminal screen stays in that app. For full controls inside Mini Chat, start a session with **+**, or close the external host before opening its saved session and clicking the terminal button. Mini Chat never takes over a running external terminal.

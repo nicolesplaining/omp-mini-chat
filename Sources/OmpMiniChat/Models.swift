@@ -49,6 +49,8 @@ struct LiveSessionSummary: Identifiable, Equatable {
     var title: String
     var projectName: String
 
+    var modifiedAt: Date = Date()
+
     var preview: String { "Live through OMP’s end-to-end encrypted relay" }
 }
 
@@ -77,7 +79,7 @@ struct OmpLiveSessionRecord: Codable, Equatable {
     }
 
     var liveSummary: LiveSessionSummary {
-        LiveSessionSummary(id: sessionId, title: summary.title, projectName: summary.projectName)
+        LiveSessionSummary(id: sessionId, title: summary.title, projectName: summary.projectName, modifiedAt: summary.modifiedAt)
     }
 
     private static let dateFormatter: ISO8601DateFormatter = {
@@ -114,6 +116,32 @@ enum OmpMiniError: LocalizedError {
             return "OMP did not answer \(command) in time."
         case .server(let message), .process(let message):
             return message
+        }
+    }
+}
+
+/// One footer item per session, ordered by conversation activity rather than live status.
+struct FooterSession: Identifiable {
+    let saved: OmpSessionSummary?
+    let live: LiveSessionSummary?
+    var id: String { saved?.id ?? live!.id }
+    var title: String { live?.title ?? saved!.title }
+    var projectName: String { live?.projectName ?? saved!.projectName }
+    var preview: String { live?.preview ?? saved!.preview }
+    var modifiedAt: Date { saved?.modifiedAt ?? live!.modifiedAt }
+
+    static func ordered(saved: [OmpSessionSummary], live: [LiveSessionSummary]) -> [FooterSession] {
+        var seen = Set<String>()
+        var entries = saved.compactMap { session -> FooterSession? in
+            guard seen.insert(session.id).inserted else { return nil }
+            return FooterSession(saved: session, live: live.first { $0.id == session.id })
+        }
+        entries += live.compactMap { session -> FooterSession? in
+            guard seen.insert(session.id).inserted else { return nil }
+            return FooterSession(saved: nil, live: session)
+        }
+        return entries.sorted {
+            $0.modifiedAt == $1.modifiedAt ? $0.id < $1.id : $0.modifiedAt > $1.modifiedAt
         }
     }
 }

@@ -534,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
                 return record.liveSummary
             }
             return LiveSessionSummary(id: record.sessionId, title: popup.store.currentTitle,
-                                      projectName: popup.store.currentProject)
+                                      projectName: popup.store.currentProject, modifiedAt: record.summary.modifiedAt)
         }
         let discoveredIDs = Set(summaries.map(\.id))
         summaries.append(contentsOf: popups.compactMap { popup in

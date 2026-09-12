@@ -145,7 +145,7 @@ final class ChatStore: ObservableObject {
 
     func refreshSessions() {
         DispatchQueue.global(qos: .utility).async {
-            let sessions = SessionCatalog.shared.listActiveSessions()
+            let sessions = SessionCatalog.shared.listSessions()
             DispatchQueue.main.async {
                 self.recentSessions = sessions
                 if self.managesUnread { self.recomputeUnread(sessions) }

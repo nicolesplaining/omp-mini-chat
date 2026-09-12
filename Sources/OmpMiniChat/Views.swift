@@ -208,7 +208,7 @@ struct MiniChatView: View {
                         }
                     }
                 }
-                if store.recentSessions.isEmpty { Text("No active sessions") }
+                if store.recentSessions.isEmpty { Text("No saved chats") }
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(store.currentTitle)
@@ -546,15 +546,16 @@ struct FooterView: View {
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
     var onHideBar: () -> Void
 
-    private var primaryLive: [LiveSessionSummary] { Array(store.liveSessions.prefix(5)) }
-    private var regularCapacity: Int { max(0, 5 - primaryLive.count) }
-    private var nonLiveSessions: [OmpSessionSummary] {
-        let liveIDs = Set(store.liveSessions.map(\.id))
-        return store.recentSessions.filter { !liveIDs.contains($0.id) }
+    private var sessions: [FooterSession] {
+        FooterSession.ordered(saved: store.recentSessions, live: store.liveSessions)
     }
-    private var primary: [OmpSessionSummary] { Array(nonLiveSessions.prefix(regularCapacity)) }
-    private var overflowLive: [LiveSessionSummary] { Array(store.liveSessions.dropFirst(5)) }
-    private var overflow: [OmpSessionSummary] { Array(nonLiveSessions.dropFirst(regularCapacity)) }
+    private var primary: [FooterSession] { Array(sessions.prefix(5)) }
+    private var overflow: [FooterSession] { Array(sessions.dropFirst(5)) }
+
+    private func open(_ session: FooterSession) {
+        if let live = session.live { store.openLiveSession(live) }
+        else if let saved = session.saved { store.openSession(saved) }
+    }
 
     var body: some View {
         ZStack {
@@ -572,47 +573,30 @@ struct FooterView: View {
                 Divider().frame(height: 24)
 
                 HStack(spacing: 0) {
-                    ForEach(primaryLive) { session in
-                        FooterTab(
-                            title: session.title,
-                            projectName: session.projectName,
-                            preview: session.preview,
-                            live: true,
-                            unread: store.unreadSessionIDs.contains(session.id),
-                            working: store.workingSessionIDs.contains(session.id),
-                            open: store.openSessionIDs.contains(session.id)
-                        ) { store.openLiveSession(session) }
-                    }
                     ForEach(primary) { session in
                         FooterTab(
                             title: session.title,
                             projectName: session.projectName,
                             preview: session.preview,
-                            live: false,
+                            live: session.live != nil,
                             unread: store.unreadSessionIDs.contains(session.id),
                             working: store.workingSessionIDs.contains(session.id),
                             open: store.openSessionIDs.contains(session.id)
-                        ) { store.openSession(session) }
+                        ) { open(session) }
                     }
                 }
 
                 Spacer(minLength: 0)
 
-                if !overflow.isEmpty || !overflowLive.isEmpty {
+                if !overflow.isEmpty {
                     Menu {
-                        ForEach(overflowLive) { session in
-                            Button {
-                                store.openLiveSession(session)
-                            } label: {
-                                Label(session.title, systemImage: "dot.radiowaves.left.and.right")
-                            }
-                        }
-                        if !overflowLive.isEmpty, !overflow.isEmpty { Divider() }
                         ForEach(overflow) { session in
                             Button {
-                                store.openSession(session)
+                                open(session)
                             } label: {
-                                if store.workingSessionIDs.contains(session.id) {
+                                if session.live != nil {
+                                    Label(session.title, systemImage: "dot.radiowaves.left.and.right")
+                                } else if store.workingSessionIDs.contains(session.id) {
                                     Label(session.title, systemImage: "hourglass")
                                 } else if store.unreadSessionIDs.contains(session.id) {
                                     Label(session.title, systemImage: "circle.fill")

@@ -3,7 +3,6 @@ import Darwin
 
 final class SessionCatalog {
     static let shared = SessionCatalog()
-    static let activeWindow: TimeInterval = 2 * 24 * 60 * 60
 
     private let fileManager = FileManager.default
     private let summaryLock = NSLock()
@@ -71,15 +70,14 @@ final class SessionCatalog {
         try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: request.path)
     }
 
-    func listActiveSessions() -> [OmpSessionSummary] {
-        let root = sessionsRoot.standardizedFileURL
+    func listSessions(in directory: URL? = nil) -> [OmpSessionSummary] {
+        let root = (directory ?? sessionsRoot).standardizedFileURL
         guard let enumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        let cutoff = Date().addingTimeInterval(-Self.activeWindow)
         var sessions: [OmpSessionSummary] = []
         for case let url as URL in enumerator {
             guard url.pathExtension == "jsonl",
@@ -87,7 +85,6 @@ final class SessionCatalog {
                   let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true,
                   let modified = values.contentModificationDate,
-                  modified >= cutoff,
                   let summary = parseSummary(at: url, modified: modified) else { continue }
             sessions.append(summary)
         }
@@ -96,7 +93,7 @@ final class SessionCatalog {
 
     func projectDirectories() -> [String] {
         var seen = Set<String>()
-        return listActiveSessions().compactMap { session in
+        return listSessions().compactMap { session in
             guard seen.insert(session.cwd).inserted else { return nil }
             return session.cwd
         }
@@ -187,7 +184,6 @@ final class SessionCatalog {
             modifiedAt: modified
         )
         summaryLock.lock()
-        if summaryCache.count > 1_000 { summaryCache.removeAll() }
         summaryCache[url.path] = (fileDate, fileSize, summary)
         summaryLock.unlock()
         return summary
