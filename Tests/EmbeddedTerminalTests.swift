@@ -33,6 +33,7 @@ final class EmbeddedTerminalTests: XCTestCase {
     @MainActor
     func testLoginRemainsReachableWhenRPCIsDisconnected() {
         let store = ChatStore(target: .newSession(cwd: NSTemporaryDirectory()))
+        XCTAssertFalse(store.showsTerminal)
         var openedTerminal = false
         store.onOpenTerminal = { openedTerminal = true }
         store.isConnected = false

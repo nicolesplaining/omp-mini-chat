@@ -6,6 +6,8 @@ final class SessionCatalog {
     static let activeWindow: TimeInterval = 2 * 24 * 60 * 60
 
     private let fileManager = FileManager.default
+    private let summaryLock = NSLock()
+    private var summaryCache: [String: (Date, Int, OmpSessionSummary)] = [:]
 
     var sessionsRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -40,7 +42,13 @@ final class SessionCatalog {
             if let existing = newestBySession[record.sessionId], existing.summary.modifiedAt >= record.summary.modifiedAt {
                 continue
             }
-            newestBySession[record.sessionId] = record
+            let saved = record.sessionFile.flatMap { parseSummary(at: URL(fileURLWithPath: $0), modified: record.summary.modifiedAt) }
+            let title = record.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            newestBySession[record.sessionId] = OmpLiveSessionRecord(
+                version: record.version, sessionId: record.sessionId, sessionFile: record.sessionFile,
+                title: title.flatMap { $0.isEmpty ? nil : $0 } ?? saved?.title,
+                cwd: record.cwd, link: record.link, viewLink: record.viewLink,
+                pid: record.pid, updatedAt: record.updatedAt)
         }
         return newestBySession.values.sorted { $0.summary.modifiedAt > $1.summary.modifiedAt }
     }
@@ -129,10 +137,18 @@ final class SessionCatalog {
         return nil
     }
 
-    private func parseSummary(at url: URL, modified: Date) -> OmpSessionSummary? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 65_536), !data.isEmpty else { return nil }
+    func parseSummary(at url: URL, modified: Date) -> OmpSessionSummary? {
+        let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+        let fileDate = attributes?[.modificationDate] as? Date ?? modified
+        let fileSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        summaryLock.lock()
+        let cached = summaryCache[url.path]
+        summaryLock.unlock()
+        if let cached, cached.0 == fileDate, cached.1 == fileSize {
+            return OmpSessionSummary(id: cached.2.id, path: cached.2.path, title: cached.2.title,
+                                     preview: cached.2.preview, cwd: cached.2.cwd, modifiedAt: modified)
+        }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe), !data.isEmpty else { return nil }
 
         var sessionID: String?
         var cwd: String?
@@ -143,7 +159,7 @@ final class SessionCatalog {
             guard let object = try? JSONSerialization.jsonObject(with: Data(rawLine)) as? [String: Any],
                   let type = object["type"] as? String else { continue }
             switch type {
-            case "title":
+            case "title", "title_change":
                 if let value = object["title"] as? String, !value.isEmpty { title = value }
             case "session":
                 sessionID = object["id"] as? String
@@ -157,13 +173,12 @@ final class SessionCatalog {
             default:
                 break
             }
-            if sessionID != nil, cwd != nil, title != nil, firstUserText != nil { break }
         }
 
         guard let sessionID, let cwd else { return nil }
-        let fallback = firstUserText?.firstNonemptyLine ?? "Untitled session"
+        let fallback = firstUserText?.firstNonemptyLine ?? "New chat"
         let displayTitle = (title?.firstNonemptyLine).flatMap { $0.isEmpty ? nil : $0 } ?? fallback
-        return OmpSessionSummary(
+        let summary = OmpSessionSummary(
             id: sessionID,
             path: url.path,
             title: String(displayTitle.prefix(80)),
@@ -171,6 +186,11 @@ final class SessionCatalog {
             cwd: cwd,
             modifiedAt: modified
         )
+        summaryLock.lock()
+        if summaryCache.count > 1_000 { summaryCache.removeAll() }
+        summaryCache[url.path] = (fileDate, fileSize, summary)
+        summaryLock.unlock()
+        return summary
     }
 
     static func textContent(_ value: Any?) -> String {

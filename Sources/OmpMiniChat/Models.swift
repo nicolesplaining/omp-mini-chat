@@ -65,7 +65,7 @@ struct OmpLiveSessionRecord: Codable, Equatable {
 
     var summary: OmpSessionSummary {
         let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayTitle = resolvedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Live OMP session"
+        let displayTitle = resolvedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "New chat"
         return OmpSessionSummary(
             id: sessionId,
             path: sessionFile ?? "",

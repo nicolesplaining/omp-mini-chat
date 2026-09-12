@@ -62,9 +62,9 @@ Mini Chat runs as a menu-bar app, with a footer at the bottom of your screen. It
 
 ### 5. Sign in inside Mini Chat
 
-Click **+** in the footer and choose a project folder. The popup opens the real OMP terminal, including its first-run provider setup. Complete sign-in there. You can also type `/login`, then `/model` to choose a model. OAuth sign-in opens your browser when needed; return to the popup for any requested code.
+Click **+** in the footer and choose a project folder. The popup opens in Chat at the compact 370 × 480 size. Click **Terminal** for first-run provider setup and sign-in. You can also type `/login`, then `/model` to choose a model. OAuth sign-in opens your browser when needed; return to the popup for any requested code.
 
-Use **Chat** in the popup header for the compact conversation view, or **Terminal** for full OMP controls. Both views use the same running session. The Chat button becomes available after the encrypted relay connects; the terminal works independently of that connection.
+Use **Terminal** in the popup header for full OMP controls, then **Chat** to return to the conversation. Switching views keeps the same session and window size. You can resize the popup yourself. Chat connects through the encrypted relay; the terminal works independently of that connection. Tabs and popup headings show the chat name, or its first message until OMP gives it a name.
 
 OMP credentials are shared with your ordinary terminal. To use OMP outside Mini Chat, run `~/.local/bin/omp`. For the shorter `omp` command, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration if needed. The default macOS zsh shell uses `~/.zshrc`; open a new Terminal window afterward.
 

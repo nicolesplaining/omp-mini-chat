@@ -179,7 +179,6 @@ struct MiniChatView: View {
                 Button(store.showsTerminal ? "Chat" : "Terminal") {
                     store.showsTerminal.toggle()
                 }
-                .disabled(store.showsTerminal && !store.isConnected)
                 .help("Switch views of the same OMP session")
             } else {
                 Button { store.openTerminal() } label: { Image(systemName: "terminal") }
@@ -188,6 +187,8 @@ struct MiniChatView: View {
             Circle()
                 .fill(store.isConnected ? ((store.isBusy || store.isTransitioning) ? Color.orange : Color.green) : Color.red)
                 .frame(width: 8, height: 8)
+                .help(store.status)
+                .accessibilityLabel(store.status)
 
             Menu {
                 Button("New session…", systemImage: "square.and.pencil") { store.createSession() }
@@ -209,7 +210,8 @@ struct MiniChatView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(store.currentTitle)
                         .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .help(store.currentTitle)
                     if !store.currentProject.isEmpty {
                         Text(store.currentProject)
                             .font(.system(size: 9, design: .monospaced))
@@ -225,16 +227,6 @@ struct MiniChatView: View {
             .disabled(store.isBusy || store.isTransitioning)
 
             Spacer(minLength: 0)
-
-            Text(store.status)
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(MiniTheme.textPrimary)
-                .lineLimit(1)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(Rectangle().fill(MiniTheme.statusSurface))
-                .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
-                .fixedSize()
 
             Button { isDarkMode.toggle() } label: {
                 Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")

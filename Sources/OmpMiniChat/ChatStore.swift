@@ -12,7 +12,7 @@ final class ChatStore: ObservableObject {
     @Published var unreadSessionIDs = Set<String>()
     @Published var draft = ""
     @Published var status = "Starting…"
-    @Published var currentTitle = "New OMP session"
+    @Published var currentTitle = "New chat"
     @Published var currentProject = ""
     @Published var currentModel = "No model"
     @Published var selectedSessionID: String?
@@ -107,7 +107,7 @@ final class ChatStore: ObservableObject {
             collabLink = link
             sessionPath = session?.path
             selectedSessionID = session?.id ?? link.sessionID
-            currentTitle = session?.title ?? "Live OMP session"
+            currentTitle = session?.title ?? "New chat"
             currentProject = session?.projectName ?? "Encrypted relay"
             status = "Connecting…"
         }
@@ -462,6 +462,7 @@ final class ChatStore: ObservableObject {
         collabSnapshotComplete = true
         streamingMessageID = nil
         messages = Array(parseCollabEntries(collabEntries).suffix(Self.transcriptItemLimit))
+        updateCollabTitle()
         isConnected = true
         isTransitioning = false
         status = isReadOnlyCollab ? "Live · read only" : "Live"
@@ -565,7 +566,23 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    private func updateCollabTitle() {
+        if let title = collabEntries.reversed().first(where: { ["title", "title_change"].contains($0["type"] as? String ?? "") })?["title"] as? String,
+           !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            currentTitle = title
+        } else if currentTitle == "New chat",
+                  let firstUser = collabEntries.compactMap({ $0["message"] as? [String: Any] })
+                    .first(where: { $0["role"] as? String == "user" }) {
+            let text = SessionCatalog.textContent(firstUser["content"])
+            if let line = text.split(whereSeparator: \.isNewline).first {
+                currentTitle = String(line.prefix(80))
+            }
+        }
+        if let id = selectedSessionID { onLiveMetadataChanged?(id, currentTitle, currentProject) }
+    }
+
     private func rebuildCollabMessages(preservingStream: Bool) {
+        updateCollabTitle()
         let stream = preservingStream ? streamingMessageID.flatMap { id in messages.first(where: { $0.id == id }) } : nil
         messages = Array(parseCollabEntries(collabEntries).suffix(Self.transcriptItemLimit))
         if let stream { messages.append(stream) }

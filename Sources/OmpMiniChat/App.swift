@@ -74,6 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSWindow.allowsAutomaticWindowTabbing = false
+        // Discard sizes saved by the release that opened terminals at 720 × 560.
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "ompMini.compactChatDefault") {
+            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("ompMini.popupFrame.") {
+                defaults.removeObject(forKey: key)
+            }
+            defaults.set(true, forKey: "ompMini.compactChatDefault")
+        }
         isFooterVisible = !UserDefaults.standard.bool(forKey: "ompMini.footerHidden")
 
         footerStore = ChatStore(target: .listOnly)
@@ -382,10 +390,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
 
         let store = ChatStore(target: target)
         store.terminal = terminal
-        store.showsTerminal = terminal != nil
+        store.showsTerminal = false
         store.isFooterVisible = isFooterVisible
         let panel = MiniPanel(
-            contentRect: NSRect(origin: .zero, size: terminal == nil ? defaultPopupSize : NSSize(width: 720, height: 560)),
+            contentRect: NSRect(origin: .zero, size: defaultPopupSize),
             styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: false
@@ -413,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
             collabRoomID: collabRoomID
         )
         popups.append(popup)
-        if terminal == nil { restoreSize(for: popup) }
+        restoreSize(for: popup)
         if let initialSessionID, store.isCollabSession {
             footerStore.upsertLiveSession(id: initialSessionID, title: store.currentTitle, projectName: store.currentProject)
         }
@@ -467,6 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
             if let id { self.footerStore.markUnread(id) }
             self.footerStore.refreshSessions()
         }
+        terminal?.start()
         if showImmediately { show(popup) }
         else { store.connect() }
         return popup
@@ -515,7 +524,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
             createPopup(target: .collab(link, session: record.summary), showImmediately: false)
         }
 
-        var summaries = records.map(\.liveSummary)
+        var summaries = records.map { record in
+            guard let popup = popups.first(where: { $0.sessionID == record.sessionId }) else {
+                return record.liveSummary
+            }
+            return LiveSessionSummary(id: record.sessionId, title: popup.store.currentTitle,
+                                      projectName: popup.store.currentProject)
+        }
         let discoveredIDs = Set(summaries.map(\.id))
         summaries.append(contentsOf: popups.compactMap { popup in
             guard popup.store.isCollabSession,
@@ -562,7 +577,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             let cwd = popup.store.terminalCwd
-            createPopup(target: .newSession(cwd: cwd), terminal: EmbeddedTerminalSession(cwd: cwd))
+            let newPopup = createPopup(target: .newSession(cwd: cwd), terminal: EmbeddedTerminalSession(cwd: cwd))
+            newPopup.store.showsTerminal = true
             return
         }
         guard !popup.store.isBusy else {
@@ -577,7 +593,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
                                                            sessionPath: popup.store.terminalSessionPath)
             popup.store.showsTerminal = true
             popup.store.isTransitioning = false
-            popup.panel.setContentSize(NSSize(width: 720, height: 560))
             self.show(popup)
         }
     }
