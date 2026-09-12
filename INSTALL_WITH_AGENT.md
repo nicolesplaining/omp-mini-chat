@@ -32,6 +32,8 @@ git clone https://github.com/nicolesplaining/omp-mini-chat.git "$HOME/Documents/
 cd "$HOME/Documents/omp-mini-chat"
 ```
 
+For network-only commands such as cloning or pulling, use a bounded tool timeout and retry once if they stall. Report the failed host and command if the retry fails; do not leave the user waiting indefinitely.
+
 Read that checkout's README and build scripts. Run the remaining build commands from its root. Do not create commits or push installation artifacts.
 
 ## 3. Build
@@ -66,7 +68,7 @@ open "$OMP_MINI_APP_PATH"
 
 Open the installed app, not the copy in the source outputs. The signature command checks the local bundle's integrity. If opening fails or macOS prompts for user action, report the exact message and let the user handle it; do not disable system protections or remove quarantine flags.
 
-Confirm the menu-bar icon and bottom footer are visible. There is no regular Dock icon. Use desktop interaction tools when available. Otherwise ask the user to confirm the footer and mark visual verification as pending until they do. An `open` command returning success alone does not prove the footer is visible.
+Confirm the menu-bar icon and bottom footer are visible. An existing installation may remember a hidden footer; use the floating chat button or menu-bar control to show it before verifying. There is no regular Dock icon. Use desktop interaction tools when available. Otherwise ask the user to confirm the footer and mark visual verification as pending until they do. An `open` command returning success alone does not prove the footer is visible.
 
 ## 5. Check history and hand off sign-in
 
