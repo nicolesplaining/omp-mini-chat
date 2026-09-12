@@ -137,12 +137,19 @@ final class OmpRPCConnection {
         queue.async { try? self.write(object) }
     }
 
-    func stop() {
+    func stop(completion: (() -> Void)? = nil) {
         queue.async {
             self.stoppedIntentionally = true
             self.stdinPipe?.fileHandleForWriting.closeFile()
-            if self.process?.isRunning == true { self.process?.terminate() }
+            let process = self.process
+            if process?.isRunning == true { process?.terminate() }
             self.failAllPending(with: OmpMiniError.notRunning)
+            if let completion {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    process?.waitUntilExit()
+                    DispatchQueue.main.async(execute: completion)
+                }
+            }
         }
     }
 

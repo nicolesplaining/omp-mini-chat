@@ -107,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
-        popups.forEach { $0.store.shutdown() }
+        popups.forEach { $0.store.shutdown(); $0.store.terminal?.stop() }
         if let hotKey { UnregisterEventHotKey(hotKey) }
         if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
     }
@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
         }
         NSApp.activate(ignoringOtherApps: true)
         guard picker.runModal() == .OK, let url = picker.url else { return }
-        createPopup(target: .newSession(cwd: url.path))
+        createPopup(target: .newSession(cwd: url.path), terminal: EmbeddedTerminalSession(cwd: url.path))
     }
 
     private func open(_ session: OmpSessionSummary) {
@@ -360,7 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
     }
 
     @discardableResult
-    private func createPopup(target: ChatStartupTarget, showImmediately: Bool = true) -> PopupSession {
+    private func createPopup(target: ChatStartupTarget, showImmediately: Bool = true,
+                             terminal: EmbeddedTerminalSession? = nil) -> PopupSession {
         let initialSessionID: String?
         let autoSynced: Bool
         let collabRoomID: String?
@@ -380,9 +381,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
         }
 
         let store = ChatStore(target: target)
+        store.terminal = terminal
+        store.showsTerminal = terminal != nil
         store.isFooterVisible = isFooterVisible
         let panel = MiniPanel(
-            contentRect: NSRect(origin: .zero, size: defaultPopupSize),
+            contentRect: NSRect(origin: .zero, size: terminal == nil ? defaultPopupSize : NSSize(width: 720, height: 560)),
             styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: false
@@ -410,7 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
             collabRoomID: collabRoomID
         )
         popups.append(popup)
-        restoreSize(for: popup)
+        if terminal == nil { restoreSize(for: popup) }
         if let initialSessionID, store.isCollabSession {
             footerStore.upsertLiveSession(id: initialSessionID, title: store.currentTitle, projectName: store.currentProject)
         }
@@ -426,6 +429,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
             popup.panel.level = popup.store.isPinned ? .floating : .normal
         }
         store.onToggleFooter = { [weak self] in self?.toggleFooter() }
+        store.onOpenTerminal = { [weak self, weak popup] in
+            guard let self, let popup else { return }
+            self.openTerminal(for: popup)
+        }
         store.onOpenSession = { [weak self] session in self?.open(session) }
         store.onNewSession = { [weak self] in self?.chooseProjectAndCreate() }
         store.onJoinCollab = { [weak self] in self?.promptAndJoinCollab() }
@@ -475,7 +482,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
     private func applyAutomaticSync(_ records: [OmpLiveSessionRecord]) {
         discoveredLiveSessions = Dictionary(uniqueKeysWithValues: records.map { ($0.sessionId, $0) })
 
+        // Match the TUI we own by PID, including after /new or /resume changes its session ID.
+        for popup in Array(popups) {
+            guard let terminal = popup.store.terminal,
+                  let pid = terminal.pid,
+                  let record = records.first(where: { $0.pid == pid }),
+                  let link = try? OmpCollabLink.parse(record.link),
+                  popup.sessionID != record.sessionId || popup.collabRoomID != link.roomID else { continue }
+            replace(popup, with: .collab(link, session: record.summary))
+        }
+
         for popup in Array(popups) where !popup.store.isBusy {
+            if popup.store.terminal != nil { continue }
             guard let sessionID = popup.sessionID else { continue }
             if let record = discoveredLiveSessions[sessionID],
                let link = try? OmpCollabLink.parse(record.link),
@@ -517,16 +535,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
         popups.removeAll { $0 === popup }
         refreshOpenSessionIDs()
 
-        let replacement = createPopup(target: target, showImmediately: false)
+        let replacement = createPopup(target: target, showImmediately: false, terminal: popup.store.terminal)
+        replacement.store.showsTerminal = popup.store.showsTerminal
         replacement.panel.setFrame(frame, display: false)
         if wasVisible { show(replacement) }
     }
 
     private func remove(_ popup: PopupSession) {
         popup.store.shutdown()
+        popup.store.terminal?.stop()
         popup.panel.orderOut(nil)
         popups.removeAll { $0 === popup }
         refreshOpenSessionIDs()
+    }
+
+    private func openTerminal(for popup: PopupSession) {
+        if popup.store.terminal != nil {
+            popup.store.showsTerminal = true
+            return
+        }
+        if popup.store.isCollabSession {
+            let alert = NSAlert()
+            alert.messageText = "This terminal is running outside Mini Chat"
+            alert.informativeText = "The chat view can send messages to that host, but cannot take over its terminal screen. Start a new OMP terminal here for full commands and account setup. Its login is shared with your other local OMP sessions."
+            alert.addButton(withTitle: "New Terminal")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let cwd = popup.store.terminalCwd
+            createPopup(target: .newSession(cwd: cwd), terminal: EmbeddedTerminalSession(cwd: cwd))
+            return
+        }
+        guard !popup.store.isBusy else {
+            let alert = NSAlert()
+            alert.messageText = "Wait for this response or stop it before switching to Terminal."
+            alert.runModal()
+            return
+        }
+        popup.store.releaseForTerminal { [weak self, weak popup] in
+            guard let self, let popup else { return }
+            popup.store.terminal = EmbeddedTerminalSession(cwd: popup.store.terminalCwd,
+                                                           sessionPath: popup.store.terminalSessionPath)
+            popup.store.showsTerminal = true
+            popup.store.isTransitioning = false
+            popup.panel.setContentSize(NSSize(width: 720, height: 560))
+            self.show(popup)
+        }
     }
 
     private func show(_ popup: PopupSession) {

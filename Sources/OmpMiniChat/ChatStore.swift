@@ -29,6 +29,14 @@ final class ChatStore: ObservableObject {
     @Published var openSessionIDs = Set<String>()
     @Published var workingSessionIDs = Set<String>()
     @Published var isReadOnlyCollab = false
+    @Published var terminal: EmbeddedTerminalSession?
+    @Published var showsTerminal = false
+    var onOpenTerminal: (() -> Void)?
+
+    func openTerminal() {
+        if terminal != nil { showsTerminal = true }
+        else { onOpenTerminal?() }
+    }
 
     var isCollabSession: Bool {
         if case .collab = startupTarget { return true }
@@ -36,7 +44,8 @@ final class ChatStore: ObservableObject {
     }
 
     var canSubmit: Bool {
-        isConnected && !isTransitioning && !isReadOnlyCollab && (!isBusy || isCollabSession)
+        let isCommand = draft.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
+        return (isConnected || isCommand) && !isTransitioning && !isReadOnlyCollab && (!isBusy || isCollabSession)
     }
 
     var onHide: (() -> Void)?
@@ -107,6 +116,7 @@ final class ChatStore: ObservableObject {
 
     func connect() {
         guard connection == nil else { return }
+        if terminal != nil && !isCollabSession { return }
         if case .listOnly = startupTarget { return }
         startConnection()
     }
@@ -119,6 +129,19 @@ final class ChatStore: ObservableObject {
         collabConnection?.close()
         collabConnection = nil
     }
+
+    func releaseForTerminal(completion: @escaping () -> Void) {
+        externalSyncTimer?.invalidate()
+        externalSyncTimer = nil
+        isTransitioning = true
+        if let connection {
+            self.connection = nil
+            connection.stop(completion: completion)
+        } else { completion() }
+    }
+
+    var terminalCwd: String { cwd.isEmpty ? FileManager.default.homeDirectoryForCurrentUser.path : cwd }
+    var terminalSessionPath: String? { sessionPath }
 
     func refreshSessions() {
         DispatchQueue.global(qos: .utility).async {
@@ -180,7 +203,14 @@ final class ChatStore: ObservableObject {
 
     func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("/"), (!isConnected || isCollabSession) {
+            openTerminal()
+            return
+        }
         guard !text.isEmpty, canSubmit else { return }
+        if text == "/login" { draft = ""; login(); return }
+        if text == "/model" { draft = ""; chooseModel(); return }
+        if text == "/terminal" { openTerminal(); return }
         if isCollabSession {
             draft = ""
             collabConnection?.sendPrompt(text)
@@ -224,8 +254,8 @@ final class ChatStore: ObservableObject {
     }
 
     func chooseModel() {
-        if isCollabSession {
-            addNotice("Change the model from the host terminal.")
+        if isCollabSession || !isConnected {
+            openTerminal()
             return
         }
         guard let connection else { return }
@@ -244,8 +274,8 @@ final class ChatStore: ObservableObject {
     }
 
     func login() {
-        if isCollabSession {
-            addNotice("Sign in from the host terminal.")
+        if isCollabSession || !isConnected {
+            openTerminal()
             return
         }
         guard let connection else { return }
@@ -404,6 +434,12 @@ final class ChatStore: ObservableObject {
             }
 
         case "ui-request":
+            if terminal != nil {
+                // The owned TUI already renders and answers this dialog. Do not
+                // open a competing native alert for the same request.
+                showsTerminal = true
+                return
+            }
             if let request = frame["request"] as? [String: Any] { presentCollabRequest(request) }
 
         case "error":

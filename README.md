@@ -1,11 +1,11 @@
 # OMP Mini Chat
 
-An always-on-top macOS footer for [Oh My Pi](https://github.com/can1357/oh-my-pi), with resizable chat popups and automatic encrypted synchronization with active terminal sessions.
+An always-on-top macOS footer for [Oh My Pi](https://github.com/can1357/oh-my-pi), with resizable popups, a full embedded OMP terminal, and a compact chat view of the same session.
 
 ## Requirements
 
 - macOS 13 or later. The build scripts support Apple Silicon and Intel Macs.
-- Apple Command Line Tools with Swift 5.9 or later. If needed, run `xcode-select --install` in Terminal and finish the installer before continuing.
+- Apple Command Line Tools with Swift 6.0 or later. If needed, run `xcode-select --install` in Terminal and finish the installer before continuing.
 - An internet connection and an account with an OMP-supported model provider.
 
 You do not need to install Bun or OMP separately. The scripts download their pinned versions.
@@ -49,19 +49,7 @@ fi
 
 The installer preserves an existing `~/.local/bin/omp` as the official fallback. It installs the sync-enabled launcher at `~/.local/bin/omp`.
 
-### 4. Sign in to OMP
-
-Launch OMP in Terminal:
-
-```sh
-"$HOME/.local/bin/omp"
-```
-
-Complete the first-run provider setup. If you already passed setup, type `/login` and select your provider, then use `/model` to choose a model. Mini Chat uses the same OMP login. Complete this step in Terminal before sending messages in Mini Chat.
-
-To use the shorter `omp` command, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration if it is not already there. For the default macOS zsh shell, that file is `~/.zshrc`. Open a new Terminal window afterward.
-
-### 5. Install and open Mini Chat
+### 4. Install and open Mini Chat
 
 Quit any running copy of Mini Chat before replacing it. From the source folder, run:
 
@@ -72,20 +60,30 @@ open "/Applications/OMP Mini Chat.app"
 
 Mini Chat runs as a menu-bar app, with a footer at the bottom of your screen. It does not appear as a regular Dock app.
 
+### 5. Sign in inside Mini Chat
+
+Click **+** in the footer and choose a project folder. The popup opens the real OMP terminal, including its first-run provider setup. Complete sign-in there. You can also type `/login`, then `/model` to choose a model. OAuth sign-in opens your browser when needed; return to the popup for any requested code.
+
+Use **Chat** in the popup header for the compact conversation view, or **Terminal** for full OMP controls. Both views use the same running session. The Chat button becomes available after the encrypted relay connects; the terminal works independently of that connection.
+
+OMP credentials are shared with your ordinary terminal. To use OMP outside Mini Chat, run `~/.local/bin/omp`. For the shorter `omp` command, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration if needed. The default macOS zsh shell uses `~/.zshrc`; open a new Terminal window afterward.
+
 ## Everyday use
 
-- Run `omp` from your project folder. Active terminal sessions appear in Mini Chat automatically; keep the terminal session open for live sync.
+- Use the embedded **Terminal** for slash commands, completion menus, settings, shell commands, keyboard shortcuts, and interactive extensions. This runs OMP itself, using [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) for terminal rendering.
+- New sessions started with **+** run inside Mini Chat. Minimizing a popup keeps its terminal running; quitting Mini Chat ends the terminals it owns.
+- Sessions started in an external terminal still appear automatically in the chat view. Their terminal screen stays in that app. For full controls inside Mini Chat, start a session with **+**, or close the external host before opening its saved session and clicking the terminal button. Mini Chat never takes over a running external terminal.
 - Click a footer tab to open its chat. Multiple popups can stay open, and each can be dragged, resized, or minimized independently.
 - A spinner means the agent is working. A blue dot means there is an unread response.
 - Use the menu-bar icon to show or hide the footer, or quit Mini Chat. `Control` + `Option` + `Space` toggles the Mini Chat windows.
 
 ## Troubleshooting and updates
 
-- **“No models available”**: finish sign-in and model selection in OMP Terminal, then reopen the Mini Chat popup.
+- **“No models available”**: open the popup's **Terminal** view and use `/login`, then `/model`. You can complete first-time setup entirely inside Mini Chat.
 - **`omp: command not found`**: use `~/.local/bin/omp` or add `~/.local/bin` to your PATH as described above.
 - **Dependency downloads stall**: retry step 2 with `BUN_CONFIG_MAX_HTTP_REQUESTS=8 ./Scripts/build-synced-omp.sh`, then run `./Scripts/build-app.sh`.
 - **No live sync**: start a fresh terminal session using `~/.local/bin/omp`. The host and Mini Chat need access to OMP's encrypted relay. `omp --stock` runs official OMP without automatic Mini Chat hosting.
 
-`omp update` updates only the official fallback. The sync runtime stays pinned to OMP 18.1.4. To update Mini Chat, pull the latest source with `git pull`, repeat steps 2 and 3, then replace the app using step 5.
+`omp update` updates only the official fallback. The sync runtime stays pinned to OMP 18.1.4. To update Mini Chat, pull the latest source with `git pull`, repeat steps 2 and 3, then replace the app using step 4.
 
 To restore official OMP as the default, run `./Scripts/uninstall-integration.sh` from the source folder. This restores the terminal command; it does not remove the Mini Chat app.

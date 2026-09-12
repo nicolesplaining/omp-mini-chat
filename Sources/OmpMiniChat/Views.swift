@@ -142,9 +142,13 @@ struct MiniChatView: View {
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(MiniTheme.border.opacity(0.55)).frame(height: 1)
-                conversation
-                Rectangle().fill(MiniTheme.hairline).frame(height: 1)
-                composer
+                if let terminal = store.terminal, store.showsTerminal {
+                    TerminalPane(session: terminal)
+                } else {
+                    conversation
+                    Rectangle().fill(MiniTheme.hairline).frame(height: 1)
+                    composer
+                }
             }
         }
         .frame(minWidth: 340, minHeight: 360)
@@ -162,13 +166,25 @@ struct MiniChatView: View {
         }
         .onAppear {
             store.connect()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { composerFocused = true }
+            if !store.showsTerminal {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { composerFocused = true }
+            }
         }
         .environment(\.colorScheme, isDarkMode ? .dark : .light)
     }
 
     private var header: some View {
         HStack(spacing: 8) {
+            if store.terminal != nil {
+                Button(store.showsTerminal ? "Chat" : "Terminal") {
+                    store.showsTerminal.toggle()
+                }
+                .disabled(store.showsTerminal && !store.isConnected)
+                .help("Switch views of the same OMP session")
+            } else {
+                Button { store.openTerminal() } label: { Image(systemName: "terminal") }
+                    .help("Open full OMP terminal")
+            }
             Circle()
                 .fill(store.isConnected ? ((store.isBusy || store.isTransitioning) ? Color.orange : Color.green) : Color.red)
                 .frame(width: 8, height: 8)
@@ -323,7 +339,7 @@ struct MiniChatView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .focused($composerFocused)
                     .onSubmit { store.sendDraft() }
-                    .disabled(!store.canSubmit)
+                    .disabled(store.isTransitioning || store.isReadOnlyCollab)
 
                 if store.isBusy {
                     Button { store.stopTurn() } label: {
