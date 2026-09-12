@@ -49,6 +49,7 @@ fi
 mkdir -p "${APP_PATH}/Contents/MacOS" "${APP_PATH}/Contents/Resources"
 cp "${PROJECT_DIR}/.build/release/OmpMiniChat" "${APP_PATH}/Contents/MacOS/OmpMiniChat"
 cp "${PROJECT_DIR}/Resources/Info.plist" "${APP_PATH}/Contents/Info.plist"
+cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_PATH}/Contents/Resources/AppIcon.icns"
 cp "${PROJECT_DIR}/Resources/mini-sync-leaf.js" "${APP_PATH}/Contents/Resources/mini-sync-leaf.js"
 cp "${VENDOR_DIR}/omp" "${APP_PATH}/Contents/Resources/omp"
 if [[ -x "${VENDOR_DIR}/omp-sync" ]]; then

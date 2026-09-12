@@ -8,6 +8,8 @@
     <string>OMP Mini Chat</string>
     <key>CFBundleExecutable</key>
     <string>OmpMiniChat</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.local.omp-mini-chat</string>
     <key>CFBundleInfoDictionaryVersion</key>
