@@ -76,6 +76,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
         NSWindow.allowsAutomaticWindowTabbing = false
         // Discard sizes saved by the release that opened terminals at 720 × 560.
         let defaults = UserDefaults.standard
+        if defaults.object(forKey: "ompMini.backgroundOpacity") == nil {
+            let baseOpacity = defaults.bool(forKey: "ompMini.darkMode") ? 0.52 : 0.5
+            let previous = (defaults.object(forKey: "ompMini.popupOpacity") as? Double) ?? 1
+            defaults.set(min(1, max(0.1, previous * baseOpacity)), forKey: "ompMini.backgroundOpacity")
+        }
         if !defaults.bool(forKey: "ompMini.compactChatDefault") {
             for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("ompMini.popupFrame.") {
                 defaults.removeObject(forKey: key)

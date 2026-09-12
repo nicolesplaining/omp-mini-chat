@@ -11,8 +11,8 @@ private enum MiniTheme {
         dark: NSColor(calibratedRed: 0.29, green: 0.48, blue: 0.68, alpha: 1)
     )
     static let windowSurface = adaptive(
-        light: NSColor(calibratedWhite: 1, alpha: 0.50),
-        dark: NSColor(calibratedWhite: 0.02, alpha: 0.52)
+        light: NSColor(calibratedWhite: 1, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.02, alpha: 1)
     )
     static let footerSurface = adaptive(
         light: NSColor(calibratedWhite: 1, alpha: 0.68),
@@ -131,45 +131,16 @@ private struct ResizeGrip: NSViewRepresentable {
     func updateNSView(_ nsView: ResizeGripNSView, context: Context) {}
 }
 
-private final class PopupOpacityView: NSView {
-    var opacity: Double = 1 {
-        didSet { applyOpacity() }
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        applyOpacity()
-    }
-
-    private func applyOpacity() {
-        window?.alphaValue = CGFloat(min(1, max(0.3, opacity)))
-    }
-}
-
-private struct PopupOpacity: NSViewRepresentable {
-    let opacity: Double
-
-    func makeNSView(context: Context) -> PopupOpacityView {
-        let view = PopupOpacityView(frame: .zero)
-        view.opacity = opacity
-        return view
-    }
-
-    func updateNSView(_ view: PopupOpacityView, context: Context) {
-        view.opacity = opacity
-    }
-}
-
 struct MiniChatView: View {
     @ObservedObject var store: ChatStore
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
-    @AppStorage("ompMini.popupOpacity") private var popupOpacity = 1.0
+    @AppStorage("ompMini.backgroundOpacity") private var popupOpacity = 0.5
     @State private var showsOpacity = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
         ZStack {
-            MiniTheme.windowSurface.ignoresSafeArea()
+            MiniTheme.windowSurface.opacity(popupOpacity).ignoresSafeArea()
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(MiniTheme.border.opacity(0.55)).frame(height: 1)
@@ -182,7 +153,6 @@ struct MiniChatView: View {
                 }
             }
         }
-        .background(PopupOpacity(opacity: popupOpacity).frame(width: 0, height: 0))
         .frame(minWidth: 340, minHeight: 360)
         .foregroundStyle(MiniTheme.textPrimary)
         .clipShape(Rectangle())
@@ -300,15 +270,15 @@ struct MiniChatView: View {
                         Text("\(Int((popupOpacity * 100).rounded()))%")
                             .monospacedDigit()
                     }
-                    Slider(value: $popupOpacity, in: 0.3...1.0, step: 0.01)
-                        .accessibilityLabel("Chat window opacity")
+                    Slider(value: $popupOpacity, in: 0.1...1.0, step: 0.01)
+                        .accessibilityLabel("Chat background opacity")
                         .accessibilityValue("\(Int((popupOpacity * 100).rounded())) percent")
                     HStack {
-                        Text("30%").foregroundStyle(.secondary)
+                        Text("10%").foregroundStyle(.secondary)
                         Spacer()
-                        Button("Reset to 100%") { popupOpacity = 1 }
+                        Button("Reset to default") { popupOpacity = isDarkMode ? 0.52 : 0.5 }
                     }
-                    Text("Applies to all chat popups and saves automatically.")
+                    Text("100% is fully opaque. Applies to all chat backgrounds and saves automatically.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
