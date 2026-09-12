@@ -675,7 +675,7 @@ struct FooterView: View {
                 .buttonStyle(.plain)
                 .help("Hide footer")
             }
-            .padding(.horizontal, 0)
+            .padding(.trailing, 10)
             .padding(.vertical, 5)
         }
         .overlay(alignment: .top) {
