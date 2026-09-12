@@ -532,7 +532,16 @@ final class ChatStore: ObservableObject {
         case "tool_execution_end":
             updateToolMessage(from: event, phase: .finished)
         case "notice":
-            addNotice(event["message"] as? String ?? "OMP notification")
+            let message = event["message"] as? String ?? "OMP notification"
+            let name = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
+            let joinNotice = "\(name) joined the collab session"
+            if message == joinNotice || message == joinNotice + " (read-only)" {
+                addStatus(title: "Connected", text: isReadOnlyCollab
+                          ? "Chat opened in Mini Chat. Read-only access."
+                          : "Chat continued in Mini Chat.")
+            } else {
+                addNotice(message)
+            }
         case "auto_retry_start":
             status = "Retrying…"
             let attempt = event["attempt"] as? Int ?? 1
