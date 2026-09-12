@@ -15,8 +15,8 @@ private enum MiniTheme {
         dark: NSColor(calibratedWhite: 0.02, alpha: 1)
     )
     static let footerSurface = adaptive(
-        light: NSColor(calibratedWhite: 1, alpha: 0.68),
-        dark: NSColor(calibratedWhite: 0.02, alpha: 0.68)
+        light: NSColor(calibratedWhite: 1, alpha: 1),
+        dark: NSColor(calibratedWhite: 0.02, alpha: 1)
     )
     static let terminalSurface = adaptive(
         light: NSColor(calibratedWhite: 1, alpha: 0.44),
@@ -271,14 +271,14 @@ struct MiniChatView: View {
                             .monospacedDigit()
                     }
                     Slider(value: $popupOpacity, in: 0.1...1.0, step: 0.01)
-                        .accessibilityLabel("Chat background opacity")
+                        .accessibilityLabel("Chat and footer background opacity")
                         .accessibilityValue("\(Int((popupOpacity * 100).rounded())) percent")
                     HStack {
                         Text("10%").foregroundStyle(.secondary)
                         Spacer()
                         Button("Reset to default") { popupOpacity = isDarkMode ? 0.52 : 0.5 }
                     }
-                    Text("100% is fully opaque. Applies to all chat backgrounds and saves automatically.")
+                    Text("100% is fully opaque. Applies to chat and footer backgrounds and saves automatically.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -542,6 +542,7 @@ private struct MessageBubble: View {
 
 struct FooterView: View {
     @ObservedObject var store: ChatStore
+    @AppStorage("ompMini.backgroundOpacity") private var backgroundOpacity = 0.5
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
     var onHideBar: () -> Void
 
@@ -557,8 +558,7 @@ struct FooterView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectBackground(material: .hudWindow).ignoresSafeArea()
-            MiniTheme.footerSurface.ignoresSafeArea()
+            MiniTheme.footerSurface.opacity(backgroundOpacity).ignoresSafeArea()
             HStack(spacing: 0) {
                 HStack(spacing: 7) {
                     Image(systemName: "terminal.fill")
@@ -741,14 +741,14 @@ private struct FooterTab: View {
 
 struct FloatingFooterControlView: View {
     @ObservedObject var store: ChatStore
+    @AppStorage("ompMini.backgroundOpacity") private var backgroundOpacity = 0.5
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             ZStack {
-                VisualEffectBackground(material: .popover)
-                MiniTheme.footerSurface
+                MiniTheme.footerSurface.opacity(backgroundOpacity)
                 Image(systemName: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(store.isFooterVisible ? Color.primary : Color.accentColor)
