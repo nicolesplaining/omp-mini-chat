@@ -182,11 +182,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSGe
 
     private func createStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(
-            systemSymbolName: "bubble.left.and.bubble.right.fill",
-            accessibilityDescription: "OMP Mini Chat"
-        )
-        image?.isTemplate = true
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            NSColor.black.setStroke()
+            let bubble = NSBezierPath()
+            bubble.move(to: NSPoint(x: 4, y: 5))
+            bubble.line(to: NSPoint(x: 4, y: 2))
+            bubble.line(to: NSPoint(x: 7.5, y: 5))
+            bubble.line(to: NSPoint(x: 14, y: 5))
+            bubble.curve(to: NSPoint(x: 16.5, y: 7.5),
+                         controlPoint1: NSPoint(x: 15.5, y: 5), controlPoint2: NSPoint(x: 16.5, y: 6))
+            bubble.line(to: NSPoint(x: 16.5, y: 13))
+            bubble.curve(to: NSPoint(x: 14, y: 15.5),
+                         controlPoint1: NSPoint(x: 16.5, y: 14.5), controlPoint2: NSPoint(x: 15.5, y: 15.5))
+            bubble.line(to: NSPoint(x: 4, y: 15.5))
+            bubble.curve(to: NSPoint(x: 1.5, y: 13),
+                         controlPoint1: NSPoint(x: 2.5, y: 15.5), controlPoint2: NSPoint(x: 1.5, y: 14.5))
+            bubble.line(to: NSPoint(x: 1.5, y: 7.5))
+            bubble.curve(to: NSPoint(x: 4, y: 5),
+                         controlPoint1: NSPoint(x: 1.5, y: 6), controlPoint2: NSPoint(x: 2.5, y: 5))
+            bubble.close()
+            bubble.lineWidth = 1.4
+            bubble.lineJoinStyle = .round
+            bubble.stroke()
+            let prompt = NSBezierPath()
+            prompt.move(to: NSPoint(x: 5, y: 12.5))
+            prompt.line(to: NSPoint(x: 7.5, y: 10.5))
+            prompt.line(to: NSPoint(x: 5, y: 8.5))
+            prompt.move(to: NSPoint(x: 10, y: 8.5))
+            prompt.line(to: NSPoint(x: 13, y: 8.5))
+            prompt.lineWidth = 1.5
+            prompt.lineCapStyle = .round
+            prompt.lineJoinStyle = .round
+            prompt.stroke()
+            return true
+        }
+        image.accessibilityDescription = "OMP Mini Chat"
+        image.isTemplate = true
         item.button?.image = image
         item.button?.toolTip = "OMP Mini Chat"
         let menu = NSMenu()
