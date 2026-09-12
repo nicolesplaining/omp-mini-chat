@@ -179,6 +179,7 @@ struct MiniChatView: View {
                 Button(store.showsTerminal ? "Chat" : "Terminal") {
                     store.showsTerminal.toggle()
                 }
+                .fixedSize()
                 .help("Switch views of the same OMP session")
             } else {
                 Button { store.openTerminal() } label: { Image(systemName: "terminal") }
