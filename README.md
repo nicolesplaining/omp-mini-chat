@@ -12,9 +12,19 @@ You do not need to install Bun or OMP separately. The scripts download their pin
 
 ## Download and install
 
-There is currently no prebuilt app download. Build the app from source using Terminal.
+There is currently no prebuilt app download. You can have a local coding agent install it, or follow the Terminal steps below.
 
-### 1. Download the source
+### Install with an agent
+
+Give your agent [INSTALL_WITH_AGENT.md](INSTALL_WITH_AGENT.md), or paste this request into an agent that can run commands on your Mac:
+
+> Read https://github.com/nicolesplaining/omp-mini-chat/blob/main/INSTALL_WITH_AGENT.md and install OMP Mini Chat on this Mac. Follow the guide through building, installing, and verifying the app. Leave provider sign-in to me.
+
+The guide covers prerequisites, terminal sync, verification, and updates. An agent running on a remote server cannot install the app on your Mac without local access.
+
+### Install manually
+
+#### 1. Download the source
 
 Run these commands from the folder where you want to keep the source:
 
@@ -23,7 +33,7 @@ git clone https://github.com/nicolesplaining/omp-mini-chat.git
 cd omp-mini-chat
 ```
 
-### 2. Build the app and sync runtime
+#### 2. Build the app and sync runtime
 
 Run the remaining setup commands from the `omp-mini-chat` folder. The first build downloads large dependencies and can take several minutes.
 
@@ -35,7 +45,7 @@ mkdir -p Vendor
 
 The finished app is at `outputs/OMP Mini Chat.app`. Wait for each command to finish successfully before continuing.
 
-### 3. Enable terminal sync
+#### 3. Enable terminal sync
 
 Create the official OMP fallback if it is missing, then install the sync launcher:
 
@@ -49,7 +59,7 @@ fi
 
 The installer preserves an existing `~/.local/bin/omp` as the official fallback. It installs the sync-enabled launcher at `~/.local/bin/omp`.
 
-### 4. Install and open Mini Chat
+#### 4. Install and open Mini Chat
 
 Quit any running copy of Mini Chat before replacing it. From the source folder, run:
 
@@ -60,7 +70,7 @@ open "/Applications/OMP Mini Chat.app"
 
 Mini Chat runs as a menu-bar app, with a footer at the bottom of your screen. It does not appear as a regular Dock app.
 
-### 5. Sign in inside Mini Chat
+#### 5. Sign in inside Mini Chat
 
 Click **+** in the footer and choose a project folder. The popup opens in Chat at the compact 370 × 480 size. Click **Terminal** for first-run provider setup and sign-in. You can also type `/login`, then `/model` to choose a model. OAuth sign-in opens your browser when needed; return to the popup for any requested code.
 

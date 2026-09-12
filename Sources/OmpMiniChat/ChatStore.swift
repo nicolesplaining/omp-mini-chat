@@ -538,7 +538,7 @@ final class ChatStore: ObservableObject {
             if message == joinNotice || message == joinNotice + " (read-only)" {
                 addStatus(title: "Connected", text: isReadOnlyCollab
                           ? "Chat opened in Mini Chat. Read-only access."
-                          : "Chat continued in Mini Chat.")
+                          : "Continuing this chat in Mini Chat.")
             } else {
                 addNotice(message)
             }
