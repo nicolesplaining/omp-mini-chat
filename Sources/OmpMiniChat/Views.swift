@@ -131,9 +131,40 @@ private struct ResizeGrip: NSViewRepresentable {
     func updateNSView(_ nsView: ResizeGripNSView, context: Context) {}
 }
 
+private final class PopupOpacityView: NSView {
+    var opacity: Double = 1 {
+        didSet { applyOpacity() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyOpacity()
+    }
+
+    private func applyOpacity() {
+        window?.alphaValue = CGFloat(min(1, max(0.3, opacity)))
+    }
+}
+
+private struct PopupOpacity: NSViewRepresentable {
+    let opacity: Double
+
+    func makeNSView(context: Context) -> PopupOpacityView {
+        let view = PopupOpacityView(frame: .zero)
+        view.opacity = opacity
+        return view
+    }
+
+    func updateNSView(_ view: PopupOpacityView, context: Context) {
+        view.opacity = opacity
+    }
+}
+
 struct MiniChatView: View {
     @ObservedObject var store: ChatStore
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
+    @AppStorage("ompMini.popupOpacity") private var popupOpacity = 1.0
+    @State private var showsOpacity = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -151,6 +182,7 @@ struct MiniChatView: View {
                 }
             }
         }
+        .background(PopupOpacity(opacity: popupOpacity).frame(width: 0, height: 0))
         .frame(minWidth: 340, minHeight: 360)
         .foregroundStyle(MiniTheme.textPrimary)
         .clipShape(Rectangle())
@@ -249,6 +281,8 @@ struct MiniChatView: View {
                     Button("Copy terminal command", systemImage: "terminal") { store.copyTerminalCommand() }
                 }
                 Button("Copy transcript", systemImage: "doc.on.doc") { store.copyTranscript() }
+                Divider()
+                Button("Opacity…", systemImage: "circle.lefthalf.filled") { showsOpacity = true }
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(width: 28, height: 28)
@@ -258,6 +292,31 @@ struct MiniChatView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .help("Session actions")
+            .popover(isPresented: $showsOpacity, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Opacity").font(.headline)
+                        Spacer()
+                        Text("\(Int((popupOpacity * 100).rounded()))%")
+                            .monospacedDigit()
+                    }
+                    Slider(value: $popupOpacity, in: 0.3...1.0, step: 0.01)
+                        .accessibilityLabel("Chat window opacity")
+                        .accessibilityValue("\(Int((popupOpacity * 100).rounded())) percent")
+                    HStack {
+                        Text("30%").foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reset to 100%") { popupOpacity = 1 }
+                    }
+                    Text("Applies to all chat popups and saves automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(16)
+                .frame(width: 260)
+                .foregroundStyle(isDarkMode ? Color.white : Color.black)
+                .preferredColorScheme(isDarkMode ? .dark : .light)
+            }
 
             Button {
                 store.isPinned.toggle()
