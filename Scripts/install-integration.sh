@@ -4,6 +4,9 @@ set -euo pipefail
 OMP_MINI_SCRIPT_DIR=${0:A:h}
 OMP_MINI_PROJECT_DIR=${OMP_MINI_SCRIPT_DIR:h}
 OMP_MINI_APP_RESOURCES=${OMP_MINI_PROJECT_DIR}/outputs/OMP\ Mini\ Chat.app/Contents/Resources
+if [[ -x "${OMP_MINI_SCRIPT_DIR}/omp-sync" ]]; then
+  OMP_MINI_APP_RESOURCES=${OMP_MINI_SCRIPT_DIR}
+fi
 OMP_MINI_VENDOR_DIR=${OMP_MINI_PROJECT_DIR}/Vendor
 OMP_MINI_SUPPORT_DIR=${HOME}/.local/share/omp-mini-chat
 OMP_MINI_BIN_DIR=${HOME}/.local/bin
@@ -28,6 +31,9 @@ chmod 700 "${OMP_MINI_SUPPORT_DIR}"
 
 if [[ -x "${OMP_MINI_LAUNCHER}" ]] && ! grep -q "OMP Mini Chat launcher" "${OMP_MINI_LAUNCHER}"; then
   install -m 755 "${OMP_MINI_LAUNCHER}" "${OMP_MINI_STOCK}"
+fi
+if [[ ! -x "${OMP_MINI_STOCK}" && -x "${OMP_MINI_APP_RESOURCES}/omp" ]]; then
+  install -m 755 "${OMP_MINI_APP_RESOURCES}/omp" "${OMP_MINI_STOCK}"
 fi
 if [[ ! -x "${OMP_MINI_STOCK}" ]]; then
   print -u2 "No official OMP executable was found at ${OMP_MINI_LAUNCHER}."

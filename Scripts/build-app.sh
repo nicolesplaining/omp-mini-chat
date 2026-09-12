@@ -49,6 +49,8 @@ fi
 mkdir -p "${APP_PATH}/Contents/MacOS" "${APP_PATH}/Contents/Resources"
 cp "${PROJECT_DIR}/.build/release/OmpMiniChat" "${APP_PATH}/Contents/MacOS/OmpMiniChat"
 cp "${PROJECT_DIR}/Resources/Info.plist" "${APP_PATH}/Contents/Info.plist"
+
+cp "${PROJECT_DIR}/Scripts/install-integration.sh" "${APP_PATH}/Contents/Resources/install-integration.sh"
 cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_PATH}/Contents/Resources/AppIcon.icns"
 cp -R "${PROJECT_DIR}/.build/release/SwiftTerm_SwiftTerm.bundle" "${APP_PATH}/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp "${PROJECT_DIR}/.build/checkouts/SwiftTerm/LICENSE" "${APP_PATH}/Contents/Resources/SwiftTerm-LICENSE"

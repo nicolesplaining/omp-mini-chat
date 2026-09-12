@@ -132,6 +132,7 @@ private struct ResizeGrip: NSViewRepresentable {
 }
 
 struct MiniChatView: View {
+    @ObservedObject private var chatNames = ChatNames.shared
     @ObservedObject var store: ChatStore
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
     @AppStorage("ompMini.backgroundOpacity") private var popupOpacity = 0.5
@@ -198,23 +199,23 @@ struct MiniChatView: View {
                 Button("Connect with collaboration link…", systemImage: "link") { store.joinCollab() }
                 Divider()
                 ForEach(Array(store.recentSessions.prefix(5))) { session in
-                    Button(session.title) { store.openSession(session) }
+                    Button(chatNames.title(for: session.id, fallback: session.title)) { store.openSession(session) }
                 }
                 if store.recentSessions.count > 5 {
                     Divider()
                     Menu("More…", systemImage: "ellipsis") {
                         ForEach(Array(store.recentSessions.dropFirst(5))) { session in
-                            Button(session.title) { store.openSession(session) }
+                            Button(chatNames.title(for: session.id, fallback: session.title)) { store.openSession(session) }
                         }
                     }
                 }
                 if store.recentSessions.isEmpty { Text("No saved chats") }
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(store.currentTitle)
+                    Text(chatNames.title(for: store.selectedSessionID ?? "", fallback: store.currentTitle))
                         .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .lineLimit(2)
-                        .help(store.currentTitle)
+                        .help(chatNames.title(for: store.selectedSessionID ?? "", fallback: store.currentTitle))
                     if !store.currentProject.isEmpty {
                         Text(store.currentProject)
                             .font(.system(size: 9, design: .monospaced))
@@ -242,6 +243,14 @@ struct MiniChatView: View {
             .help(isDarkMode ? "Use light mode" : "Use dark mode")
 
             Menu {
+                Button("Rename chat…", systemImage: "pencil") {
+                    if let id = store.selectedSessionID { store.renameChat(id: id, title: store.currentTitle) }
+                }
+                .disabled(store.selectedSessionID == nil)
+                if let id = store.selectedSessionID, chatNames.hasCustomName(id) {
+                    Button("Use OMP name") { chatNames.reset(id) }
+                }
+                Divider()
                 if store.isCollabSession {
                     Button("Copy live-session link", systemImage: "link") { store.copyTerminalCommand() }
                 } else {
@@ -541,6 +550,7 @@ private struct MessageBubble: View {
 }
 
 struct FooterView: View {
+    @ObservedObject private var chatNames = ChatNames.shared
     @ObservedObject var store: ChatStore
     @AppStorage("ompMini.backgroundOpacity") private var backgroundOpacity = 0.5
     @AppStorage("ompMini.darkMode") private var isDarkMode = false
@@ -575,7 +585,7 @@ struct FooterView: View {
                 HStack(spacing: 0) {
                     ForEach(primary) { session in
                         FooterTab(
-                            title: session.title,
+                            title: chatNames.title(for: session.id, fallback: session.title),
                             projectName: session.projectName,
                             preview: session.preview,
                             live: session.live != nil,
@@ -583,6 +593,14 @@ struct FooterView: View {
                             working: store.workingSessionIDs.contains(session.id),
                             open: store.openSessionIDs.contains(session.id)
                         ) { open(session) }
+                        .contextMenu {
+                            Button("Rename chat…", systemImage: "pencil") {
+                                store.renameChat(id: session.id, title: session.title)
+                            }
+                            if chatNames.hasCustomName(session.id) {
+                                Button("Use OMP name") { chatNames.reset(session.id) }
+                            }
+                        }
                     }
                 }
 
@@ -595,13 +613,13 @@ struct FooterView: View {
                                 open(session)
                             } label: {
                                 if session.live != nil {
-                                    Label(session.title, systemImage: "dot.radiowaves.left.and.right")
+                                    Label(chatNames.title(for: session.id, fallback: session.title), systemImage: "dot.radiowaves.left.and.right")
                                 } else if store.workingSessionIDs.contains(session.id) {
-                                    Label(session.title, systemImage: "hourglass")
+                                    Label(chatNames.title(for: session.id, fallback: session.title), systemImage: "hourglass")
                                 } else if store.unreadSessionIDs.contains(session.id) {
-                                    Label(session.title, systemImage: "circle.fill")
+                                    Label(chatNames.title(for: session.id, fallback: session.title), systemImage: "circle.fill")
                                 } else {
-                                    Text(session.title)
+                                    Text(chatNames.title(for: session.id, fallback: session.title))
                                 }
                             }
                         }

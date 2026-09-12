@@ -5,14 +5,14 @@ An always-on-top macOS footer for [Oh My Pi](https://github.com/can1357/oh-my-pi
 ## Requirements
 
 - macOS 13 or later. The build scripts support Apple Silicon and Intel Macs.
-- Apple Command Line Tools with Swift 6.0 or later. If needed, run `xcode-select --install` in Terminal and finish the installer before continuing.
+- For building from source only: Apple Command Line Tools with Swift 6.0 or later. If needed, run `xcode-select --install` in Terminal and finish the installer before continuing.
 - An internet connection and an account with an OMP-supported model provider.
 
 You do not need to install Bun or OMP separately. The scripts download their pinned versions.
 
 ## Download and install
 
-There is currently no prebuilt app download. You can have a local coding agent install it, or follow the Terminal steps below.
+Mini Chat is installed by building it locally from source. Give the guide below to a local coding agent, or follow the manual steps.
 
 ### Install with an agent
 
@@ -45,15 +45,11 @@ mkdir -p Vendor
 
 The finished app is at `outputs/OMP Mini Chat.app`. Wait for each command to finish successfully before continuing.
 
-#### 3. Enable terminal sync
+#### 3. Optional: enable terminal sync
 
-Create the official OMP fallback if it is missing, then install the sync launcher:
+Skip this step if you only want to use Mini Chat itself. To sync chats from your normal OMP terminal, run:
 
 ```sh
-mkdir -p "$HOME/.local/bin"
-if [ ! -x "$HOME/.local/bin/omp-stock" ]; then
-  install -m 755 Vendor/omp "$HOME/.local/bin/omp-stock"
-fi
 ./Scripts/install-integration.sh
 ```
 
@@ -81,6 +77,7 @@ OMP credentials are shared with your ordinary terminal. To use OMP outside Mini 
 ## Everyday use
 
 - Use the embedded **Terminal** for slash commands, completion menus, settings, shell commands, keyboard shortcuts, and interactive extensions. This runs OMP itself, using [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) for terminal rendering.
+- Rename a chat by right-clicking its footer tab and choosing **Rename chat…**, or use **… → Rename chat…** in its popup. Names are saved in Mini Chat on this Mac and do not change the name in the external OMP terminal.
 - Existing chats load automatically from `~/.omp/agent/sessions`, with no age cutoff. The footer shows the five most recently updated chats. Open **More** to choose an older chat. Live and saved chats share the same list.
 - Adjust transparency with **… → Opacity…** in a popup. The slider controls chat and footer background opacity from 10–100%, with 100% fully opaque. Text stays crisp. The default matches the original background, 50% in light mode or 52% in dark mode. **Reset to default** restores it, and your setting is saved automatically.
 - New sessions started with **+** run inside Mini Chat. Minimizing a popup keeps its terminal running; quitting Mini Chat ends the terminals it owns.

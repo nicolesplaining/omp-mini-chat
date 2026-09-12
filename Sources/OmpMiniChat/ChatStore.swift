@@ -174,6 +174,20 @@ final class ChatStore: ObservableObject {
         onOpenSession?(summary)
     }
 
+    func renameChat(id: String, title: String) {
+        let alert = NSAlert()
+        alert.messageText = "Rename chat"
+        alert.informativeText = "Choose the name shown in Mini Chat."
+        let field = NSTextField(string: ChatNames.shared.title(for: id, fallback: title))
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        ChatNames.shared.rename(id, to: field.stringValue)
+    }
+
     func createSession() {
         onNewSession?()
     }
