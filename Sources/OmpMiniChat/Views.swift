@@ -177,7 +177,7 @@ struct MiniChatView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if store.terminal != nil {
                 Button(store.showsTerminal ? "Chat" : "Terminal") {
                     store.showsTerminal.toggle()
@@ -214,7 +214,7 @@ struct MiniChatView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(chatNames.title(for: store.selectedSessionID ?? "", fallback: store.currentTitle))
                         .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                        .lineLimit(2)
+                        .lineLimit(1)
                         .help(chatNames.title(for: store.selectedSessionID ?? "", fallback: store.currentTitle))
                     if !store.currentProject.isEmpty {
                         Text(store.currentProject)
@@ -226,100 +226,103 @@ struct MiniChatView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .frame(maxWidth: 150, alignment: .leading)
-            .layoutPriority(1)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
             .disabled(store.isBusy || store.isTransitioning)
 
-            Spacer(minLength: 0)
-
-            Button { isDarkMode.toggle() } label: {
-                Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")
-                    .frame(width: 28, height: 28)
-                    .background(Rectangle().fill(MiniTheme.controlSurface))
-                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isDarkMode ? "Use light mode" : "Use dark mode")
-            .help(isDarkMode ? "Use light mode" : "Use dark mode")
-
-            Menu {
-                Button("Rename chat…", systemImage: "pencil") {
-                    if let id = store.selectedSessionID { store.renameChat(id: id, title: store.currentTitle) }
-                }
-                .disabled(store.selectedSessionID == nil)
-                if let id = store.selectedSessionID, chatNames.hasCustomName(id) {
-                    Button("Use OMP name") { chatNames.reset(id) }
-                }
-                Divider()
-                if store.isCollabSession {
-                    Button("Copy live-session link", systemImage: "link") { store.copyTerminalCommand() }
-                } else {
-                    Button("Sign in…", systemImage: "person.crop.circle") { store.login() }
-                    Button("Choose model…", systemImage: "cpu") { store.chooseModel() }
+            HStack(spacing: 6) {
+                Menu {
+                    Button("Rename chat…", systemImage: "pencil") {
+                        if let id = store.selectedSessionID { store.renameChat(id: id, title: store.currentTitle) }
+                    }
+                    .disabled(store.selectedSessionID == nil)
+                    if let id = store.selectedSessionID, chatNames.hasCustomName(id) {
+                        Button("Use OMP name") { chatNames.reset(id) }
+                    }
                     Divider()
-                    Button("Copy terminal command", systemImage: "terminal") { store.copyTerminalCommand() }
-                }
-                Button("Copy transcript", systemImage: "doc.on.doc") { store.copyTranscript() }
-                Divider()
-                Button("Opacity…", systemImage: "circle.lefthalf.filled") { showsOpacity = true }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 28, height: 28)
-                    .background(Rectangle().fill(MiniTheme.controlSurface))
-                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help("Session actions")
-            .popover(isPresented: $showsOpacity, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Opacity").font(.headline)
-                        Spacer()
-                        Text("\(Int((popupOpacity * 100).rounded()))%")
-                            .monospacedDigit()
+                    if store.isCollabSession {
+                        Button("Copy live-session link", systemImage: "link") { store.copyTerminalCommand() }
+                    } else {
+                        Button("Sign in…", systemImage: "person.crop.circle") { store.login() }
+                        Button("Choose model…", systemImage: "cpu") { store.chooseModel() }
+                        Divider()
+                        Button("Copy terminal command", systemImage: "terminal") { store.copyTerminalCommand() }
                     }
-                    Slider(value: $popupOpacity, in: 0.1...1.0, step: 0.01)
-                        .accessibilityLabel("Chat and footer background opacity")
-                        .accessibilityValue("\(Int((popupOpacity * 100).rounded())) percent")
-                    HStack {
-                        Text("10%").foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Reset to default") { popupOpacity = isDarkMode ? 0.52 : 0.5 }
-                    }
-                    Text("100% is fully opaque. Applies to chat and footer backgrounds and saves automatically.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Button("Copy transcript", systemImage: "doc.on.doc") { store.copyTranscript() }
+                    Divider()
+                    Button("Opacity…", systemImage: "circle.lefthalf.filled") { showsOpacity = true }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12, weight: .semibold))
                 }
-                .padding(16)
-                .frame(width: 260)
-                .foregroundStyle(isDarkMode ? Color.white : Color.black)
-                .preferredColorScheme(isDarkMode ? .dark : .light)
-            }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 28, height: 28)
+                .background(Rectangle().fill(MiniTheme.controlSurface))
+                .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+                .accessibilityLabel("Session actions")
+                .help("Session actions")
+                .popover(isPresented: $showsOpacity, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Opacity").font(.headline)
+                            Spacer()
+                            Text("\(Int((popupOpacity * 100).rounded()))%")
+                                .monospacedDigit()
+                        }
+                        Slider(value: $popupOpacity, in: 0.1...1.0, step: 0.01)
+                            .accessibilityLabel("Chat and footer background opacity")
+                            .accessibilityValue("\(Int((popupOpacity * 100).rounded())) percent")
+                        HStack {
+                            Text("10%").foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Reset to default") { popupOpacity = isDarkMode ? 0.52 : 0.5 }
+                        }
+                        Text("100% is fully opaque. Applies to chat and footer backgrounds and saves automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(width: 260)
+                    .foregroundStyle(isDarkMode ? Color.white : Color.black)
+                    .preferredColorScheme(isDarkMode ? .dark : .light)
+                }
 
-            Button {
-                store.isPinned.toggle()
-                store.onTogglePin?()
-            } label: {
-                Image(systemName: store.isPinned ? "pin.fill" : "pin")
-                    .frame(width: 28, height: 28)
-                    .background(Rectangle().fill(MiniTheme.controlSurface))
-                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(store.isPinned ? "Disable always on top" : "Enable always on top")
-            .help(store.isPinned ? "Always on top is on" : "Always on top is off")
+                Button { isDarkMode.toggle() } label: {
+                    Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")
+                        .frame(width: 28, height: 28)
+                        .background(Rectangle().fill(MiniTheme.controlSurface))
+                        .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isDarkMode ? "Use light mode" : "Use dark mode")
+                .help(isDarkMode ? "Use light mode" : "Use dark mode")
 
-            Button { store.onHide?() } label: {
-                Image(systemName: "minus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .background(Rectangle().fill(MiniTheme.controlSurface))
-                    .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+                Button {
+                    store.isPinned.toggle()
+                    store.onTogglePin?()
+                } label: {
+                    Image(systemName: store.isPinned ? "pin.fill" : "pin")
+                        .frame(width: 28, height: 28)
+                        .background(Rectangle().fill(MiniTheme.controlSurface))
+                        .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(store.isPinned ? "Disable always on top" : "Enable always on top")
+                .help(store.isPinned ? "Always on top is on" : "Always on top is off")
+
+                Button { store.onHide?() } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .background(Rectangle().fill(MiniTheme.controlSurface))
+                        .overlay(Rectangle().stroke(MiniTheme.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Minimize chat popup")
+                .help("Minimize popup")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Minimize chat popup")
-            .help("Minimize popup")
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 9)
         .frame(height: 42)
